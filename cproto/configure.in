@@ -1,0 +1,75 @@
+dnl Process this file with 'autoconf' to produce a 'configure' script
+dnl $Id$
+AC_REVISION($Revision$)
+AC_INIT(cproto.c)
+AC_PROG_CC
+AC_PROG_CPP
+AC_PROG_LEX
+AC_PROG_MAKE_SET
+AC_PROG_YACC
+AC_PROG_INSTALL
+AC_GCC_TRADITIONAL
+
+AC_CHECK_PROGS(LINT, [lint alint])
+if test -n "$LINT" ; then
+	AC_DEFINE(HAVE_PROG_LINT)
+fi
+
+###	use option -with-warnings to turn on all gcc warnings
+if test -n "$GCC"
+then
+AC_ARG_WITH(warnings,
+[  --with-warnings         use gcc warnings (used for developing this tool)],
+[CFLAGS="$CFLAGS -Wall -Wshadow -Wconversion -Wstrict-prototypes -Wmissing-prototypes"])
+fi
+
+###	extra things that we'll substitute in the makefile
+dnl AC_SUBST(LIBS)
+AC_SUBST(EXTRA_OBJS)
+
+AC_CONST
+AC_STDC_HEADERS
+AC_HAVE_HEADERS(stdlib.h unistd.h)
+AC_HAVE_HEADERS(getopt.h string.h memory.h)
+
+AC_HAVE_FUNCS(strstr tmpfile link unlink mktemp)
+
+###	special configuration tests
+TD_SIZE_T
+TD_YACC_ERROR
+TD_POPEN_TEST
+
+###	debugging/testing
+AC_ARG_WITH(trace,
+[  --with-trace            use trace.c for memory-testing],[
+	AC_HEADER_TIME
+	AC_HAVE_FUNCS(gettimeofday)
+	AC_DEFINE(DOALLOC,10000)
+	EXTRA_OBJS="$EXTRA_OBJS trace.o dump.o"])
+AC_ARG_WITH(dmalloc,
+[  --with-dmalloc          use Gray Watson's dmalloc],[
+	AC_CHECK_LIB(dmalloc,dmalloc_debug)])
+AC_ARG_WITH(dbmalloc,
+[  --with-dbmalloc         use Conor Cahill's dbmalloc],[
+	AC_CHECK_LIB(dbmalloc,debug_malloc)])
+
+echo setting other definitions
+AC_DEFINE_UNQUOTED(CPP,"$CPP")
+
+###	output makefile and config.h
+changequote({,})dnl
+AC_OUTPUT(Makefile config_h,
+{
+echo creating config.h
+sed	-e '/^# /d' \
+	-e 's/ -D/\
+#define /g' \
+	-e 's/\(#define [A-Za-z_][A-Za-z0-9_]*\)=/\1	/g' \
+	-e 's/\\//g' \
+	config_h >config.h
+}
+echo removing config_h
+rm config_h
+)
+changequote([,])dnl
+touch stamp-h
