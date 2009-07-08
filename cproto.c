@@ -2,7 +2,7 @@
  *
  * C function prototype generator and function definition converter
  */
-#define VERSION "4.6c"
+#define VERSION "4.7g"
 
 #include <stdio.h>
 #include <ctype.h>
@@ -12,7 +12,7 @@
 #if HAVE_GETOPT_H
 #include <getopt.h>
 #else
-extern int getopt ARGS((int argc, char *const *argv, const char *shortopts));
+extern int getopt (int argc, char *const *argv, const char *shortopts);
 extern char *optarg;
 extern int optind;
 #endif
@@ -23,7 +23,12 @@ char *progname;
 /* Program options */
 
 /* If nonzero, output variables declared "extern" in include-files */
-int extern_in = 0;
+unsigned extern_in = 0;
+
+/* When TRUE, track the include-level (works with gcc, not some others) */
+#if OPT_LINTLIBRARY
+int do_tracking = FALSE;
+#endif
 
 /* When TRUE, suppress return-statements in function-bodies */
 int exitlike_func = FALSE;
@@ -33,6 +38,9 @@ boolean extern_out = FALSE;
 
 /* By default, generate global declarations only */
 Scope scope_out = SCOPE_EXTERN;
+
+/* If TRUE, output definitions for inline functions */
+boolean inline_out = FALSE;
 
 /* If TRUE, export typedef declarations (needed for lint-libs) */
 #if OPT_LINTLIBRARY
@@ -90,49 +98,30 @@ FuncFormat fmt[] = {
 boolean quiet = FALSE;
 
 /* Include file directories */
-#ifdef MSDOS
-# ifdef __TURBOC__
-int num_inc_dir = 2;
-char *inc_dir[MAX_INC_DIR] = { "" , "/tc/include" };
-# else
-int num_inc_dir = 1;
-char *inc_dir[MAX_INC_DIR] = { "" };
-# endif
-#else
-# ifdef vms
-int num_inc_dir = 2;
-char *inc_dir[MAX_INC_DIR] = { "[]", "sys$library:" };
-# else
-int num_inc_dir = 2;
-char *inc_dir[MAX_INC_DIR] = { "", "/usr/include" };
-# endif
-#endif
+unsigned num_inc_dir = 0;
+char **inc_dir = 0;
 
 /* Run the C preprocessor */
 #ifdef CPP
 # if !HAVE_POPEN_PROTOTYPE
-extern FILE *popen ARGS((const char *c, const char *m));
+extern FILE *popen (const char *c, const char *m);
 # endif
-extern int pclose ARGS((FILE *p));
+extern int pclose (FILE *p);
+static unsigned cpp_len;
 static char *cpp = CPP, *cpp_opt, *cpp_cmd;
 #endif
-
-static	char *	escape_string   ARGS((char *src));
-static	void	usage           ARGS((void));
-static	void	process_options ARGS((int *pargc, char ***pargv));
-static	void	parse_options   ARGS((char *src, int maxargc, int *pargc, char **argv));
 
 /* Try to allocate some memory.
  * If unsuccessful, output an error message and exit.
  */
 #if !HAVE_LIBDMALLOC
 #ifdef NO_LEAKS
-char *xMalloc(n,f,l) unsigned n; char *f; int l;
+void *xMalloc(unsigned n, char *f GCC_UNUSED, int l GCC_UNUSED)
 #else
-char *xmalloc (n) unsigned n;
+void *xmalloc (unsigned n)
 #endif
 {
-    char *p;
+    void *p;
 #if HAVE_LIBDBMALLOC
     p = debug_malloc(f, l, n);
 #else
@@ -140,11 +129,35 @@ char *xmalloc (n) unsigned n;
 #endif
 
     if (p == NULL) {
-	fprintf(stderr, "%s: out of memory (cannot allocate %d bytes)\n",
+	fprintf(stderr, "%s: out of memory (cannot allocate %u bytes)\n",
 		progname, n);
 	exit(EXIT_FAILURE);
     }
-    *p = '\0';
+    return p;
+}
+#endif /* if !HAVE_LIBDMALLOC */
+
+/* Try to reallocate some memory.
+ * If unsuccessful, output an error message and exit.
+ */
+#if !HAVE_LIBDMALLOC
+#ifdef NO_LEAKS
+void *xRealloc(void *p, unsigned n, char *f GCC_UNUSED, int l GCC_UNUSED)
+#else
+void *xrealloc (void *p, unsigned n)
+#endif
+{
+#if HAVE_LIBDBMALLOC
+    p = debug_malloc(f, l, p, n);
+#else
+    p = realloc(p, n);
+#endif
+
+    if (p == NULL) {
+	fprintf(stderr, "%s: out of memory (cannot allocate %u bytes)\n",
+		progname, n);
+	exit(EXIT_FAILURE);
+    }
     return p;
 }
 #endif /* if !HAVE_LIBDMALLOC */
@@ -154,15 +167,15 @@ char *xmalloc (n) unsigned n;
  */
 #if !HAVE_LIBDMALLOC
 #ifdef NO_LEAKS
-char *xStrdup(src, f, l) char *src; char *f; int l;
+char *xStrdup(const char *src, char *f, int l)
 #else
-char *xstrdup (src) char *src;
+char *xstrdup (const char *src)
 #endif
 {
 #if defined(NO_LEAKS)
-    return strcpy(xMalloc(strlen(src)+1, f, l), src);
+    return strcpy((char *) xMalloc(strlen(src)+1, f, l), src);
 #else
-    return strcpy(xmalloc(strlen(src)+1), src);
+    return strcpy((char *) xmalloc(strlen(src)+1), src);
 #endif
 }
 #endif /* if !HAVE_LIBDMALLOC */
@@ -170,7 +183,7 @@ char *xstrdup (src) char *src;
 /* Output the current source file name and line number.
  */
 void
-put_error ()
+put_error (void)
 {
     fprintf(stderr, "%s:%u: ", cur_file_name(), cur_line_num());
 }
@@ -178,10 +191,7 @@ put_error ()
 /* Scan for options from a string.
  */
 static void
-parse_options (src, maxargc, pargc, argv)
-char *src;
-int maxargc, *pargc;
-char **argv;
+parse_options (char *src, int maxargc, int *pargc, char **argv)
 {
     char *g, *p, c;
     int argc;
@@ -197,12 +207,12 @@ char **argv;
 	argv[argc++] = g;
 
 	p = g;
-	while (1) {
+	for (;;) {
 	    if (c == ' ' || c == '\t' || c == '\0') {
 		*p = '\0';
 		break;
 	    } else if (c == '"') {
-		while (1) {
+		for (;;) {
 		    c = *++g;
 		    if (c == '"') {
 			c = *++g;
@@ -230,8 +240,7 @@ char **argv;
  * This function knows only a few escape sequences.
  */
 static char *
-escape_string (src)
-char *src;
+escape_string (char *src)
 {
     char *result, *get, *put;
 
@@ -268,8 +277,7 @@ char *src;
 /* Returns true iff the character is a path leaf separator
  */
 int
-is_path_sep (ch)
-int ch;
+is_path_sep (int ch)
 {
 #if defined(MSDOS) || defined(OS2)
     return ch == '/' || ch == '\\';
@@ -282,13 +290,11 @@ int ch;
  * Return a pointer to the string.
  */
 char *
-trim_path_sep (s)
-char *s;
+trim_path_sep (char *s)
 {
-    int n;
+    unsigned n = strlen(s);
 
-    n = strlen(s);
-    if (n > 0) {
+    if (n != 0) {
 	if (is_path_sep(s[n-1]))
 	    s[n-1] = '\0';
     }
@@ -298,7 +304,7 @@ char *s;
 /* Output usage message and exit.
  */
 static void
-usage ()
+usage (void)
 {
     fprintf(stderr, "usage: %s [ option ... ] [ file ... ]\n", progname);
     fputs("Options:\n", stderr);
@@ -316,11 +322,15 @@ usage ()
     fputs("  -q               Disable include file read failure messages\n", stderr);
     fputs("  -s               Output static declarations also\n", stderr);
     fputs("  -S               Output static declarations only\n", stderr);
+    fputs("  -i               Output inline declarations also\n", stderr);
 #if OPT_LINTLIBRARY
     fputs("  -T               Output type definitions\n", stderr);
 #endif
     fputs("  -v               Output variable declarations\n", stderr);
     fputs("  -x               Output variables and functions declared \"extern\"\n", stderr);
+#if OPT_LINTLIBRARY
+    fputs("  -X level         Limit externs to given include-level\n", stderr);
+#endif
     fputs("  -m               Put macro around prototype parameters\n", stderr);
     fputs("  -M name          Set name of prototype macro\n", stderr);
     fputs("  -d               Omit prototype macro definition\n", stderr);
@@ -336,18 +346,47 @@ usage ()
     exit(EXIT_FAILURE);
 }
 
+#define CHUNK(n) (((n) | 7) + 1)
+
+/*
+ * CURRENT_DIR is the first element in the array, and the system includes
+ * are the last.  Other -I options are inserted in order between the two.
+ */
+static void
+add_inc_dir (char *src)
+{
+    unsigned have = CHUNK(num_inc_dir);
+    unsigned need = CHUNK(num_inc_dir + 1);
+    unsigned used = (need * sizeof(char *));
+    char *save;
+
+    if (inc_dir == 0) {
+	inc_dir = (char **)malloc(used);
+    } else if (have != need) {
+	inc_dir = (char **)realloc(inc_dir, used);
+    }
+
+    switch (num_inc_dir) {
+    case 0:
+	/* FALLTHRU */
+    case 1:
+	inc_dir[num_inc_dir++] = trim_path_sep(xstrdup(src));
+	break;
+    default:
+	save = inc_dir[--num_inc_dir];
+	inc_dir[num_inc_dir++] = trim_path_sep(xstrdup(src));
+	inc_dir[num_inc_dir++] = save;
+	break;
+    }
+}
+
 #ifdef	vms
 static	char	*cpp_defines;
 static	char	*cpp_include;
 static	char	*cpp_undefns;
 
-static	void	add2list ARGS((char *dst, char *src));
-static	void	add_option ARGS((char *keyword, char *src));
-
 static void
-add2list(dst, src)
-char *dst;
-char *src;
+add2list(char *dst, char *src)
 {
     if (*dst)
 	strcat(dst, ",");
@@ -355,9 +394,7 @@ char *src;
 }
 
 static void
-add_option(keyword, src)
-char *keyword;
-char *src;
+add_option(char *keyword, char *src)
 {
     if (*src)
 	sprintf(cpp_opt + strlen(cpp_opt), " /%s=(%s)", keyword, src);
@@ -373,8 +410,7 @@ char *src;
 #define QUOTECHARS "\"\'\t\n "
 
 static int
-quote_length (s)
-char *s;
+quote_length (char *s)
 {
     int len = strlen(s);
 
@@ -391,8 +427,7 @@ char *s;
  * /bin/sh.
  */
 static char *
-quote_string (s) 
-char *s;
+quote_string (char *s)
 {
     if (strpbrk(s, QUOTECHARS))  {
 	char *src = s;
@@ -431,12 +466,42 @@ char *s;
 
 #define MAX_OPTIONS 40
 
+#define ALL_OPTIONS "\
+B:\
+C:\
+D:\
+E:\
+F:\
+I:\
+M:\
+O:\
+P:\
+S\
+T\
+U:\
+V\
+X:\
+a\
+b\
+c\
+d\
+e\
+f:\
+i\
+l\
+m\
+o:\
+p\
+q\
+s\
+t\
+v\
+x\
+"
 /* Process the command line options.
  */
 static void
-process_options (pargc, pargv)
-int *pargc;
-char ***pargv;
+process_options (int *pargc, char ***pargv)
 {
     int argc, eargc, nargc;
     char **argv, *eargv[MAX_OPTIONS], **nargv;
@@ -446,7 +511,7 @@ char ***pargv;
     unsigned n;
 #endif
 #if defined(CPP) && !defined(vms)
-    char tmp[MAX_TEXT_SIZE];
+    char *tmp;
 #endif
 
     argc = *pargc;
@@ -454,7 +519,7 @@ char ***pargv;
 #ifndef vms	/* this conflicts with use of foreign commands... */
     if ((s = getenv("CPROTO")) != NULL) {
 	parse_options(s, MAX_OPTIONS, &eargc, eargv);
-	nargv = (char **)xmalloc((eargc+argc+1)*sizeof(char *));
+	nargv = (char **)xmalloc(((unsigned)(eargc+argc+1))*sizeof(char *));
 	nargv[0] = argv[0];
 	nargc = 1;
 	for (i = 0; i < eargc; ++i)
@@ -479,26 +544,20 @@ char ***pargv;
     *(cpp_undefns = xmalloc(n+argc)) = '\0';
     n += 30;	/* for keywords */
 #endif
-    *(cpp_opt = xmalloc(n)) = '\0';
+    *(cpp_opt = (char *) xmalloc(n)) = '\0';
     n += (2 + strlen(CPP) + BUFSIZ);
-    *(cpp_cmd = xmalloc(n)) = '\0';
+    *(cpp_cmd = (char *) xmalloc(n)) = '\0';
+    cpp_len = n;
 #endif
 
-    while ((c = getopt(argc, argv, "aB:bC:cD:dE:eF:f:I:mM:P:pqSstU:Vvo:O:Tlx")) != EOF) {
+    while ((c = getopt(argc, argv, ALL_OPTIONS)) != EOF) {
 	switch (c) {
 	case 'I':
 #ifdef	vms
 	    add2list(cpp_include, optarg);
 	    break;
 #else	/* unix */
-	    if (num_inc_dir < MAX_INC_DIR) {
-		char *save = inc_dir[--num_inc_dir];
-		inc_dir[num_inc_dir++] = trim_path_sep(xstrdup(optarg));
-		inc_dir[num_inc_dir++] = save;
-	    } else {
-		fprintf(stderr, "%s: too many include directories\n",
-		    progname);
-	    }
+	    add_inc_dir(optarg);
 #endif
 		/*FALLTHRU*/
 	case 'D':
@@ -513,8 +572,10 @@ char ***pargv;
 	    break;
 #else	/* UNIX, etc. */
 #ifdef CPP
+	    tmp = (char *) xmalloc(quote_length(optarg) + 10);
 	    sprintf(tmp, " -%c%s", c, optarg);
 	    strcat(cpp_opt, quote_string(tmp));
+	    free(tmp);
 #endif
 #endif
 	    break;
@@ -554,17 +615,17 @@ char ***pargv;
 		((c == 'F') ? FMT_FUNC : FMT_PROTO);
 
 	    fmt[i].decl_spec_prefix = s;
-	    while (*s != '\0' && isascii(*s) && !isalnum(*s)) ++s;
+	    while (*s != '\0' && !isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 	    *s++ = '\0';
-	    while (*s != '\0' && isascii(*s) && isalnum(*s)) ++s;
+	    while (*s != '\0' && isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 
 	    fmt[i].declarator_prefix = s;
-	    while (*s != '\0' && isascii(*s) && !isalnum(*s)) ++s;
+	    while (*s != '\0' && !isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 	    *s++ = '\0';
-	    while (*s != '\0' && isascii(*s) && isalnum(*s)) ++s;
+	    while (*s != '\0' && isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 
 	    fmt[i].declarator_suffix = s;
@@ -573,17 +634,17 @@ char ***pargv;
 	    *s++ = '\0';
 
 	    fmt[i].first_param_prefix = s;
-	    while (*s != '\0' && isascii(*s) && !isalnum(*s)) ++s;
+	    while (*s != '\0' && !isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 	    *s++ = '\0';
 	    while (*s != '\0' && *s != ',') ++s;
 	    if (*s == '\0') usage();
 
 	    fmt[i].middle_param_prefix = ++s;
-	    while (*s != '\0' && isascii(*s) && !isalnum(*s)) ++s;
+	    while (*s != '\0' && !isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 	    *s++ = '\0';
-	    while (*s != '\0' && isascii(*s) && isalnum(*s)) ++s;
+	    while (*s != '\0' && isalnum(UCH(*s))) ++s;
 	    if (*s == '\0') usage();
 
 	    fmt[i].last_param_suffix = s;
@@ -613,6 +674,9 @@ char ***pargv;
 	    break;
 	case 's':
 	    scope_out = SCOPE_ALL;
+	    break;
+	case 'i':
+	    inline_out = TRUE;
 	    break;
 	case 't':
 	    func_style = FUNC_TRADITIONAL;
@@ -649,7 +713,13 @@ char ***pargv;
 	    (void)strcat(cpp_opt, " -C");	/* pass-through comments */
 # endif
 	    break;
-#endif
+	case 'X':
+	    extern_in = (unsigned) atoi(optarg);
+	    do_tracking = TRUE;
+	    if ((int) extern_in < 0)
+		usage();
+	    break;
+#endif	/* OPT_LINTLIBRARY */
 	case 'x':
 	    extern_in = MAX_INC_DEPTH;
 	    break;
@@ -669,9 +739,7 @@ char ***pargv;
 }
 
 int
-main (argc, argv)
-int argc;
-char *argv[];
+main (int argc, char *argv[])
 {
     int i;
     FILE *inf;
@@ -680,6 +748,15 @@ char *argv[];
 #ifdef __EMX__
     /* Expand file wild cards. */
     _wildcard(&argc, &argv);
+#endif
+
+    add_inc_dir(CURRENT_DIR);
+#if defined(MSDOS) && defined(__TURBOC__)
+    add_inc_dir("/tc/include");
+#elif defined(vms)
+    add_inc_dir("sys$library:");
+#else
+    add_inc_dir("/usr/include");
 #endif
 
     /* Get the program name from the 0th argument, stripping the pathname
@@ -697,7 +774,7 @@ char *argv[];
 	}
     }
 #else
-    for (i = strlen(progname)-1; i >= 0; i--) {
+    for (i = (int)strlen(progname)-1; i >= 0; i--) {
 	if (is_path_sep(progname[i])) {
 	    progname += (i + 1);
 	    break;
@@ -749,7 +826,7 @@ char *argv[];
 	    optind++;
 	for (i = optind; i < argc; ++i) {
 #ifdef CPP
-# if CPP_DOES_ONLY_C_FILES
+# if defined(CPP_DOES_ONLY_C_FILES)
 	    /*
 	     * GCC (and possibly other compilers) don't pass-through the ".l"
 	     * and ".y" files to the C preprocessor stage.  Fix this by
@@ -762,7 +839,7 @@ char *argv[];
 	    char temp[BUFSIZ];
 	    char *s = strcpy(temp, argv[i]);
 #  if HAVE_LINK
-	    int len = strlen(temp);
+	    int len = (int)strlen(temp);
 	    s += len - 1;
 	    if ((len > 2)
 	     && (s[-1] == '.')
@@ -770,7 +847,7 @@ char *argv[];
 		while (s != temp && s[-1] != '/')
 		    s--;
 		(void)strcpy(s, "XXXXXX.c");
-	    	mktemp(temp);
+	    	call_mktemp(temp);
 	    	if (link(argv[i], temp) < 0)
 		    (void)strcpy(temp, argv[i]);
 	    }
@@ -790,15 +867,21 @@ char *argv[];
 		 * the file that we're writing to.
 		 */
 		sprintf(cpp_cmd, cpp,
-			mktemp(strcpy(temp, "sys$scratch:XXXXXX.i")));
+			call_mktemp(strcpy(temp, "sys$scratch:XXXXXX.i")));
 		sprintf(cpp_cmd + strlen(cpp_cmd), "%s %s", cpp_opt, FileName);
 		system(cpp_cmd);
 		inf = fopen(temp, "r");
 #else
+		if (cpp_len < (strlen(cpp) + strlen(cpp_opt) + strlen(FileName) + 100)) {
+			cpp_len = (strlen(cpp) + strlen(cpp_opt) + strlen(FileName) + 100);
+			cpp_cmd = realloc(cpp_cmd, cpp_len);
+		}
 		sprintf(cpp_cmd, "%s%s %s", cpp, cpp_opt, FileName);
+		if (quiet)
+			strcat(cpp_cmd, " 2>/dev/null");
 		inf = popen(cpp_cmd, "r");
 #endif
-		if (inf == NULL) {
+		if (inf == NULL || ferror(inf) || feof(inf)) {
 		    fprintf(stderr, "%s: error running %s\n", progname,
 		     cpp_cmd);
 		    continue;
@@ -824,7 +907,7 @@ char *argv[];
 #else
 		pclose(inf);
 #endif
-#if CPP_DOES_ONLY_C_FILES || defined(vms)
+#if defined(CPP_DOES_ONLY_C_FILES) || defined(vms)
 		if (strcmp(argv[i], temp)) {
 			(void)unlink(temp);
 		}
@@ -853,9 +936,14 @@ char *argv[];
     if (cpp_undefns != 0) free(cpp_undefns);
 #  endif
 # endif
-    while (--num_inc_dir > 1) {
-	free(inc_dir[num_inc_dir]);
+    if (inc_dir != 0) {
+	while (num_inc_dir-- > 0) {
+	    free(inc_dir[num_inc_dir]);
+	}
+	free(inc_dir);
+	inc_dir = 0;
     }
+    free_lexer();
     free_parser();
 # if OPT_LINTLIBRARY
     free_lintlibs();
@@ -875,8 +963,7 @@ char *argv[];
  */
 #if HAVE_LIBDBMALLOC
 #undef exit
-void ExitProgram(code)
-int code;
+void ExitProgram(int code)
 {
     extern int malloc_errfd;	/* FIXME: should be in dbmalloc.h */
     malloc_dump(malloc_errfd);

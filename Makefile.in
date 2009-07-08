@@ -3,7 +3,7 @@
 # UNIX template-makefile for C prototype generator
 
 THIS = cproto
-RELEASE = 4_6d
+RELEASE = 4_7g
 
 #### Start of system configuration section. ####
 
@@ -21,8 +21,9 @@ INSTALL_PROGRAM	= @INSTALL_PROGRAM@
 INSTALL_DATA	= @INSTALL_DATA@
 
 DEFINES		=
-CPPFLAGS	= -I$(srcdir) $(DEFINES) -DHAVE_CONFIG_H @CPPFLAGS@
-CFLAGS		= @CFLAGS@ $(CPPFLAGS)
+EXTRA_CFLAGS	= @EXTRA_CFLAGS@
+CPPFLAGS	= -I. -I$(srcdir) $(DEFINES) -DHAVE_CONFIG_H @CPPFLAGS@
+CFLAGS		= @CFLAGS@ $(CPPFLAGS) $(EXTRA_CFLAGS)
 LIBS		= @LIBS@ @LEXLIB@
 
 prefix		= @prefix@
@@ -32,10 +33,15 @@ bindir		= @bindir@
 mandir		= @mandir@/man1
 manext		= 1
 
+x		= @EXEEXT@
+o		= .@OBJEXT@
+
 #### End of system configuration section. ####
 
 SHELL		= /bin/sh
 @SET_MAKE@
+
+PROG		= $(THIS)$x
 
 LDFLAGS		= @LDFLAGS@
 
@@ -62,7 +68,6 @@ C_FILES = \
 	lintlibs.c \
 	semantic.c \
 	strkey.c \
-	strstr.c \
 	symbol.c
 
 AUX_FILES = \
@@ -75,14 +80,14 @@ JUNK =	\
 	y.tab.c
 
 EXTRA_OBJS = @EXTRA_OBJS@
-OBJECTS = $(THIS).o lintlibs.o semantic.o strkey.o strstr.o symbol.o y.tab.o \
+OBJECTS = $(THIS)$o lintlibs$o semantic$o strkey$o symbol$o y.tab$o \
 	$(EXTRA_OBJS)
 SOURCES = $(DOC_FILES) $(MAK_FILES) $(H_FILES) $(C_FILES) $(AUX_FILES)
 
-all : $(THIS) # $(THIS).man
+all : $(PROG) # $(THIS).man
 
 install: all installdirs
-	$(INSTALL_PROGRAM) $(THIS) $(bindir)/$(THIS)
+	$(INSTALL_PROGRAM) $(PROG) $(bindir)/$(PROG)
 	- $(INSTALL_DATA) $(srcdir)/$(THIS).1 $(mandir)/$(THIS).$(manext)
 
 installdirs:
@@ -90,10 +95,14 @@ installdirs:
 	- $(SHELL) ${srcdir}/mkdirs.sh $(mandir)
 
 uninstall:
-	- rm -f $(bindir)/$(THIS) $(mandir)/$(THIS).$(manext)
+	- rm -f $(bindir)/$(PROG) $(mandir)/$(THIS).$(manext)
 
-$(THIS) : $(OBJECTS)
-	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $(OBJECTS) $(LIBS)
+.c$o:
+	@RULE_CC@
+	@ECHO_CC@$(CC) -c $(CFLAGS) $<
+
+$(PROG) : $(OBJECTS)
+	@ECHO_LD@$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $(OBJECTS) $(LIBS)
 
 y.tab.c : grammar.y
 	$(YACC) $(srcdir)/grammar.y
@@ -105,45 +114,32 @@ $(THIS).man : $(THIS).1
 	- nroff -man $(srcdir)/$(THIS).1 >$@
 
 mostlyclean :
-	- rm -f core .nfs* *.o *.bak *.BAK *.log *.man *.out $(JUNK) default.h
-	- rm -f Part?? part.*
+	- rm -f core .nfs* *$o *.bak *.BAK *.man *.out $(JUNK) default.h
 
 clean : mostlyclean
-	- rm -f $(THIS)
-	cd testing; $(MAKE) $@
+	- rm -f $(PROG)
+	- cd $(srcdir)/testing && $(MAKE) $@
 
 distclean : clean
-	- rm -f stamp-h config.log config.cache config.status config.h Makefile
+	- rm -f config.log config.cache config.status config.h Makefile
 	- rm -f .version .fname
-	cd testing; $(MAKE) $@
+	- cd $(srcdir)/testing && $(MAKE) $@
 
 realclean: distclean
 	- rm -f tags
-	cd testing; $(MAKE) $@
+	- cd $(srcdir)/testing && $(MAKE) $@
 
-check:	$(THIS)
-	cd testing; $(MAKE) run_test
-
-# configure might not change config.h
-config.h : stamp-h
-stamp-h : config.status
-	./config.status
-
-Makefile: Makefile.in config.status
-	./config.status
-
-config.status : configure
-	./config.status --recheck
-
-configure : configure.in aclocal.m4
-	autoconf
+check:	$(PROG)
+	cd $(srcdir)/testing && $(MAKE) run_test
 
 # I keep my sources in RCS, and assign a symbolic release to the current patch
 # level.  The 'manifest' script knows how to build a list of files for a given
-# revision.
+# revision -TD
 MANIFEST:
 	manifest -rv$(RELEASE) \
-		$(THIS).man testing/case*.dcl testing/case*.bat
+		$(THIS).man \
+		$(srcdir)/testing/case*.dcl \
+		$(srcdir)/testing/case*.bat
 
 dist: MANIFEST
 	- rm -f .fname .files
@@ -158,42 +154,29 @@ dist: MANIFEST
 	tar -cf - `cat .fname` | gzip >`cat .fname`.tgz
 	rm -rf `cat .fname` .fname .files
 
-# Some of the output will be uuencoded because the test scripts include
-# <CR><LF> terminated ".bat" files for MS-DOS.
-dist-shar: MANIFEST
-	- rm -f .fname .files
-	echo '$(THIS)-$(RELEASE)' >.fname
-	cat MANIFEST | grep ' ' | egrep -v ' subdirectory$$' | sed -e 's/\ .*//' | uniq >.files
-	shar -M -n`cat .fname` -opart -l50 `cat .files`
-	- rm -f .fname .files
-
-# This uses Rick Salz's cshar to make a set of shar-files.
-# (It'll clobber the version info in MANIFEST, and doesn't restore timestamps,
-# but that's another bag of worms).
-dist-cshar: MANIFEST
-	makekit -m
-
 default.h: $(C_FILES) lex.yy.c
-	./$(THIS) -e -v -m -M ARGS -d $(DEFINES) $(C_FILES) grammar.y >$@
+	./$(PROG) -e -v -m -M ARGS -d $(DEFINES) $(C_FILES) grammar.y >$@
 
 lint: $(C_FILES) $(JUNK)
 	$(LINT) $(CPPFLAGS) -lyacc $(C_FILES) y.tab.c >$@.out
 
 llib: $(C_FILES) $(JUNK)
-	./$(THIS) -l $(CPPFLAGS) $(C_FILES) y.tab.c >$@.out
+	./$(PROG) -l $(CPPFLAGS) $(C_FILES) y.tab.c >$@.out
+
+self: $(C_FILES) $(JUNK)
+	./$(PROG) $(CPPFLAGS) $(C_FILES) y.tab.c >$@.out
 
 tags: $(H_FILES) $(C_FILES) $(AUX_FILES)
-	ctags -t $(C_FILES) $(AUX_FILES) $(H_FILES)
+	ctags $(C_FILES) $(AUX_FILES) $(H_FILES)
 
 depend:
 	makedepend -- $(CPPFLAGS) -- $(C_FILES) y.tab.c
 
 # DO NOT DELETE THIS LINE -- make depend depends on it.
 
-cproto.o: cproto.h config.h system.h
-lintlibs.o: cproto.h config.h system.h semantic.h symbol.h
-semantic.o: cproto.h config.h system.h semantic.h
-strkey.o: cproto.h config.h system.h 
-strstr.o: cproto.h config.h system.h
-symbol.o: cproto.h config.h system.h symbol.h
-y.tab.o: cproto.h config.h system.h symbol.h semantic.h lex.yy.c yyerror.c
+cproto$o   : cproto.h config.h system.h
+lintlibs$o : cproto.h config.h system.h semantic.h symbol.h
+semantic$o : cproto.h config.h system.h semantic.h
+strkey$o   : cproto.h config.h system.h 
+symbol$o   : cproto.h config.h system.h symbol.h
+y.tab$o	   : cproto.h config.h system.h symbol.h semantic.h lex.yy.c yyerror.c

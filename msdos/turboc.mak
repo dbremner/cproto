@@ -43,7 +43,7 @@ MAK_FILES = \
 
 DIST2 = lex.l grammar.y
 DIST3 = system.h cproto.h patchlev.h semantic.h symbol.h
-DIST4 = cproto.c popen.c lintlibs.c semantic.c strkey.c strstr.c symbol.c
+DIST4 = cproto.c popen.c lintlibs.c semantic.c strkey.c symbol.c
 
 OBJECTS = \
 	cproto.obj \
@@ -52,7 +52,6 @@ OBJECTS = \
 	popen.obj \
 	semantic.obj \
 	strkey.obj \
-	strstr.obj \
 	symbol.obj \
 	y_tab.obj
 
@@ -99,7 +98,6 @@ getopt.obj +
 popen.obj +
 semantic.obj +
 strkey.obj +
-strstr.obj +
 symbol.obj +
 y_tab.obj +
 $(LIBS)
@@ -153,5 +151,4 @@ lintlibs.obj : cproto.cfg system.h cproto.h symbol.h semantic.h
 popen.obj : cproto.cfg system.h cproto.h
 semantic.obj : cproto.cfg system.h cproto.h symbol.h semantic.h
 strkey.obj : cproto.cfg cproto.h system.h
-strstr.obj : cproto.cfg system.h
 symbol.obj : cproto.cfg system.h cproto.h symbol.h

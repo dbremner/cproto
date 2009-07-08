@@ -7,6 +7,7 @@
 #define __attribute__(p)
 #endif
 
+extern void Where(char *f, int n);
 extern void Trace(char *f, ...) __attribute__((format (printf,1,2)));
 extern void show_alloc(void);
 extern void Elapsed(char *msg);

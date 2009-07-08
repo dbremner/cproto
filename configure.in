@@ -1,26 +1,41 @@
 dnl Process this file with 'autoconf' to produce a 'configure' script
 dnl $Id$
 AC_REVISION($Revision$)
+AC_PREREQ(2.52.20030208)
 AC_INIT(cproto.c)
+AC_CONFIG_HEADER(config.h:config_h.in)
+CF_CHECK_CACHE
+
 AC_PROG_CC
 AC_PROG_CPP
 AC_PROG_LEX
 AC_PROG_MAKE_SET
 AC_PROG_YACC
 AC_PROG_INSTALL
-AC_GCC_TRADITIONAL
+
+CF_PROG_EXT
+
+CF_ANSI_CC_REQD
+CF_XOPEN_SOURCE
 
 AC_CHECK_PROGS(LINT, [lint alint])
 if test -n "$LINT" ; then
+	cf_have_lint=yes
+else
+	cf_have_lint=no
 	AC_DEFINE(HAVE_PROG_LINT)
 fi
 
-###	use option -with-warnings to turn on all gcc warnings
-if test -n "$GCC"
-then
-AC_ARG_WITH(warnings,
-[  --with-warnings         use gcc warnings (used for developing this tool)],
-[CFLAGS="$CFLAGS -Wall -Wshadow -Wconversion -Wstrict-prototypes -Wmissing-prototypes"])
+CF_WITH_WARNINGS
+CF_DISABLE_ECHO
+
+AC_ARG_ENABLE(llib,
+[  --enable-llib           enable lint-library (llib) support],
+[cf_enable_llib=$enableval],
+[cf_enable_llib=$cf_have_lint])
+
+if test "$cf_enable_llib" = yes ; then
+	AC_DEFINE(OPT_LINTLIBRARY)
 fi
 
 ###	extra things that we'll substitute in the makefile
@@ -32,9 +47,10 @@ AC_STDC_HEADERS
 AC_HAVE_HEADERS(stdlib.h unistd.h)
 AC_HAVE_HEADERS(getopt.h string.h memory.h)
 
-AC_HAVE_FUNCS(strstr tmpfile link unlink mktemp)
+AC_HAVE_FUNCS(strstr tmpfile link unlink)
 
 ###	special configuration tests
+CF_MKSTEMP
 CF_SIZE_T
 CF_YACC_ERROR
 CF_POPEN_TEST
@@ -46,30 +62,10 @@ AC_ARG_WITH(trace,
 	AC_HAVE_FUNCS(gettimeofday)
 	AC_DEFINE(DOALLOC,10000)
 	EXTRA_OBJS="$EXTRA_OBJS trace.o dump.o"])
-AC_ARG_WITH(dmalloc,
-[  --with-dmalloc          use Gray Watson's dmalloc],[
-	AC_CHECK_LIB(dmalloc,dmalloc_debug)])
-AC_ARG_WITH(dbmalloc,
-[  --with-dbmalloc         use Conor Cahill's dbmalloc],[
-	AC_CHECK_LIB(dbmalloc,debug_malloc)])
+CF_DISABLE_LEAKS
 
 echo setting other definitions
 AC_DEFINE_UNQUOTED(CPP,"$CPP")
 
 ###	output makefile and config.h
-changequote({,})dnl
-AC_OUTPUT(Makefile config_h,
-{
-echo creating config.h
-sed	-e '/^# /d' \
-	-e 's/ -D/\
-#define /g' \
-	-e 's/\(#define [A-Za-z_][A-Za-z0-9_]*\)=/\1	/g' \
-	-e 's/\\//g' \
-	config_h >config.h
-}
-echo removing config_h
-rm config_h
-)
-changequote([,])dnl
-touch stamp-h
+AC_OUTPUT(Makefile,,,cat)

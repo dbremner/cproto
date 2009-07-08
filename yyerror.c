@@ -1,15 +1,23 @@
 /* $Id$
  *
- * This file is included into grammar.y to provide the 'yyerror()' function. 
+ * This file is included into grammar.y to provide the 'yyerror()' function.
  * If the yacc/bison parser is one that we know how to backtrack, we'll augment
  * the "syntax error" message with information that shows what type of token we
  * expected.
  */
 
+#ifndef UCH
+#define UCH(c)		((unsigned char)(c))
+#endif
+
 /* 'yyerror()' has to be a macro, since it must be expanded inline to subvert
  * the internal state of 'yyparse()'.
  */
+
 #if BISON_HAS_YYTNAME	/* bison 1.22 */
+#if !defined(YYFLAG)
+#define YYFLAG YYPACT_NINF	/* yabb (yet-another-bison-bug) */
+#endif
 #if YYDEBUG
 /* this is better than defining YYERROR_VERBOSE */
 #define	yyerror(text) {\
@@ -46,7 +54,7 @@
 	for (x = ((n > 0) ? n : 0); x < YYLAST; ++x) {\
 	    c1 = x - n;\
 	    if ((yychk[yyact[x]] == c1) && (c1 != YYERRCODE)) {\
-		if (isascii(c1)) {\
+		if (isascii(UCH(c1))) {\
 		    static char tmp[] = "'%'";\
 		    tmp[1] = c1;\
 		    yaccExpected(tmp, count++);\
@@ -81,7 +89,7 @@
 	}\
     }\
     yaccExpected("", -1);\
-} 
+}
 #endif
 #endif	/* YACC_HAS_YYNAME */
 
@@ -90,40 +98,38 @@
  * Any way we define it, 'yyerror()' is a real function (that we provide,
  * rather than use the one from a library).
  */
-static void yaccError    ARGS((char *));
+static void yaccError    (char *);
 
 #ifdef yyerror
-static int  compar       ARGS((const void *a, const void *b));
-static void yaccExpected ARGS((const char *, int count));
-
-static
-int compar(p1, p2)
-const void *p1;
-const void *p2;
+static int
+compar(const void *p1, const void *p2)
 {
-    return (strcmp(*(char **)p1, *(char **)p2));
+    const char *a = *(const char *const *)p1;
+    const char *b = *(const char *const *)p2;
+    return strcmp(a, b);
 }
 
 #define MSGLEN 80
 
-static
-void yaccExpected (s, count)
-const char *s;
-int count;
+static void
+yaccExpected (const char *s, int count)
 {
     static struct {
-	char *actual, *name;
+	const char *actual, *name;
     } tbl[] = {
 	{"...",	"T_ELLIPSIS"},
 	{"[]",	"T_BRACKETS"},
 	{"{",	"T_LBRACE"},
 	{"}",	"T_MATCHRBRACE"},
     };
-    register int j, k, x;
+    unsigned j;
+    int k, x;
     unsigned n;
-    char *t = (char *)s;
-    char *tag;
+    const char *t = s;
+    char *tt;
+    const char *tag;
     char tmp[MSGLEN];
+
     static unsigned have;
     static unsigned used;
     static char	**vec;
@@ -133,12 +139,12 @@ int count;
 	    if (used > 1)
 		qsort((char *)vec, used, sizeof(vec[0]), compar);
 	    /* limit length of error message */
-	    k = MSGLEN - (strlen(vec[used-1]) + 2);
+	    k = MSGLEN - (int) (strlen(vec[used-1]) + 2);
 	    for (j = 0; j < used; j++) {
 		tag = j ? " " : "Expected: ";
 		s = vec[j];
 		if (j != (used - 1)) {
-		    x = strlen(s) + strlen(tag);
+		    x = (int) (strlen(s) + strlen(tag));
 		    if (k <= 0)
 			continue;
 		    else if ((k - x) <= 0)
@@ -155,8 +161,10 @@ int count;
 	}
 	used = 0;
     } else {
+	int found = FALSE;
+
+	strcpy(tmp, t);
 	if (!strncmp(t, "T_", 2)) {
-	    int	found = FALSE;
 	    for (j = 0; j < sizeof(tbl)/sizeof(tbl[0]); j++) {
 		if (!strcmp(t, tbl[j].name)) {
 		    t = tbl[j].actual;
@@ -165,21 +173,21 @@ int count;
 		}
 	    }
 	    if (!found) {
-		t = strncpy(tmp, t + 2, sizeof(tmp)-1);
-		for (k = 0; t[k] != '\0'; k++) {
-		    if (t[k] == '_')
-			t[k] = '-';
-		    else if (isalpha(t[k]) && isupper(t[k]))
-			t[k] = tolower(t[k]);
+		tt = strncpy(tmp, t + 2, sizeof(tmp)-1);
+		for (k = 0; tt[k] != '\0'; k++) {
+		    if (tt[k] == '_')
+			tt[k] = '-';
+		    else if (isalpha(UCH(tt[k])) && isupper(UCH(tt[k])))
+			tt[k] = (char) tolower(UCH(tt[k]));
 		}
 	    }
 	}
-	if (count >= have) {
-	    have = (count + 10);
+	if ((unsigned) count >= have) {
+	    have = (unsigned) (count + 10);
 	    if (vec == 0) {
-		vec = malloc(have * sizeof(*vec));
+		vec = (char **) malloc(have * sizeof(*vec));
 	    } else {
-		vec = realloc(vec, have * sizeof(*vec));
+		vec = (char **) realloc(vec, have * sizeof(*vec));
 	    }
 	    for (n = used; n < have; n++)
 		vec[n] = 0;
@@ -187,8 +195,8 @@ int count;
 	if (vec[count] != 0) {
 	    free(vec[count]);
 	}
-	vec[count] = xstrdup(t);
-	used = count + 1;
+	vec[count] = xstrdup(found ? t : tmp);
+	used = (unsigned) (count + 1);
     }
 }
 #else

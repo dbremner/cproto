@@ -35,7 +35,7 @@ scripts : $(SOURCES)
 	make_dcl.sh `fgrep unix run_test.txt |sed -e 's/=.*//'`
 
 clean:
-	- rm -f *.log *.out *.err *.tmp case*.c
+	- rm -f *.log *.out *.err *.tmp case*.c *.dcl
 
 distclean: clean
 

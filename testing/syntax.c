@@ -8,7 +8,7 @@
 #ifdef	ERR_YACC
 auto		x;
 register	x1;
-#endif	ERR_YACC
+#endif	/* ERR_YACC */
 static		x2;
 extern		x3;
 #ifdef	ERR_CC
@@ -17,7 +17,7 @@ typedef		x4;
 typedef	int	x4t;
 #ifdef	ERR_YACC
 void		x5;
-#endif	ERR_YACC
+#endif	/* ERR_YACC */
 char		x6;
 short		x7;
 int		x8;
@@ -30,7 +30,7 @@ struct		x14;
 #ifdef	ERR_CHECK
 struct		x14a {};
 struct		{};
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 union		x15;
 enum		x16;
 x4t;
@@ -39,7 +39,17 @@ const		x18;
 volatile	x19;
 #ifdef	ERR_CHECK
 junk		x20;
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
+
+extern int *asm (fopen, (__const char *__restrict __filename, __const char *__restrict __modes), fopen64);
+extern int __asm__ (mkstemp, (char *__template), mkstemp64);
+int __asm__ (mkstemp, (char *__template), mkstemp64);
+asm("something");
+asm("something", "else");
+asm("something", (this and that));
+int asm(first, "something");
+static int asm(first, "something");
+extern int asm(first, "something");
 
 typedef	struct	_first	{
 	int		a:5;
@@ -55,7 +65,7 @@ typedef	struct	_first	{
 #ifdef	ERR_CHECK
 	long	float	f2;
 	long	double	g2;
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 	struct	_first	*link;
 	}	_FIRST;
 
@@ -129,7 +139,7 @@ int	array[][10][20];
 
 #ifdef	ERR_CHECK
 	dots_2(p1, ...)		{ return(1); }
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 
 	dots_3(int P1,char P2, ...)	{ return(1); }
 
@@ -142,7 +152,7 @@ extern	char *xdots_1(int p1, ...);
 
 #ifdef	ERR_CHECK
 extern	xdots_2(p1, ...);
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 
 extern	xdots_3(int P1,char P2, ...);
 
@@ -152,14 +162,14 @@ _FIRST	*func2(_FIRST *P1,int P2[],float p) { }
 int	*(func_func)(
 #ifdef	ERR_CHECK
 p1,p2,p3
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 )	{ return(0); }
 
 extern	float	efunc0(p1,p2,p3);
 extern	_FIRST	efunc1(int p1, float p2,long P3);
 #ifdef	ERR_CHECK
 extern	_FIRST	efunc1(int p1, float p2,p3);
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 
 
 typedef	int	bool;
@@ -195,7 +205,7 @@ typedef	char	*string;
 string	s = "aaa\0000\
 
 bbb";
-#endif	ERR_LEX
+#endif	/* ERR_LEX */
 
 extern	int	junk;
 
@@ -203,7 +213,7 @@ main(argc, argv)
 register argc;
 #ifdef	ERR_CHECK
 extern
-#endif	ERR_CHECK
+#endif	/* ERR_CHECK */
 char	**argv;
 {
 }
@@ -294,3 +304,11 @@ extern GenFunc(int *, int *());
 extern void * (*__glob_opendir_hook) (const char *__directory);
 extern const char *(*__glob_readdir_hook) (void * __stream);
 extern void (*__glob_closedir_hook) (void * __stream);
+
+/* inline function */
+int inline inline_func(double x) { return(0); }
+static int inline local_inline_func(double x) { return(0); }
+
+/* c99 types */
+long long xxx = 1;
+char *xxs = "\x1234\?\u1234";
