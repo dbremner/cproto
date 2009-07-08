@@ -74,7 +74,7 @@
 
 #define YYMAXDEPTH 150
 
-extern	int	yylex ARGS((void));
+extern	int	yylex (void);
 
 /* declaration specifier attributes for the typedef statement currently being
  * scanned
@@ -94,7 +94,8 @@ static ParameterList *func_params;
 static Declarator *cur_declarator;
 
 /* temporary string buffer */
-static char buf[MAX_TEXT_SIZE];
+static char *temp_buf = 0;
+static unsigned temp_len = 0;
 
 /* table of typedef names */
 static SymbolTable *typedef_names;
@@ -109,6 +110,7 @@ static SymbolTable *type_qualifiers;
 typedef struct {
     char *base_name;		/* base input file name */
     char *file_name;		/* current file name */
+    unsigned len_file_name;	/* ...its allocated size */
     FILE *file; 		/* input file */
     unsigned line_num;		/* current line number in input file */
     FILE *tmp_file;		/* temporary file */
@@ -122,7 +124,7 @@ static IncludeStack *cur_file;	/* current input file */
 
 #include "yyerror.c"
 
-static int haveAnsiParam ARGS((void));
+static int haveAnsiParam (void);
 
 
 /* Flags to enable us to find if a procedure returns a value.
@@ -131,10 +133,8 @@ static int return_val,	/* nonzero on BRACES iff return-expression found */
 	   returned_at;	/* marker for token-number to set 'return_val' */
 
 #if OPT_LINTLIBRARY
-static char *dft_decl_spec ARGS((void));
-
-static char *
-dft_decl_spec ()
+static const char *
+dft_decl_spec (void)
 {
     return (lintLibrary() && !return_val) ? "void" : "int";
 }
@@ -144,7 +144,7 @@ dft_decl_spec ()
 #endif
 
 static int
-haveAnsiParam ()
+haveAnsiParam (void)
 {
     Parameter *p;
     if (func_params != 0) {
@@ -156,16 +156,19 @@ haveAnsiParam ()
     }
     return FALSE;
 }
-%}
 
-%union {
-    Text text;
-    DeclSpec decl_spec;
-    Parameter *parameter;
-    ParameterList param_list;
-    Declarator *declarator;
-    DeclaratorList decl_list;
+static void need_temp(unsigned need)
+{
+    if (need > temp_len) {
+	if (need < MAX_TEXT_SIZE)
+	    need = MAX_TEXT_SIZE;
+	if (need < temp_len * 2)
+	    need = temp_len * 2;
+	temp_buf = type_realloc(char, temp_buf, need);
+	temp_len = need;
+    }
 }
+%}
 %%
 
 program
@@ -183,7 +186,7 @@ external_declaration
 	| function_definition
 	| ';'
 	| linkage_specification
-	| T_ASM T_ASMARG ';'
+	| asm_specifier
 	| error T_MATCHRBRACE
 	{
 	    yyerrok;
@@ -370,8 +373,8 @@ decl_specifiers
 	| decl_specifiers decl_specifier
 	{
 	    join_decl_specs(&$$, &$1, &$2);
-	    free($1.text);
-	    free($2.text);
+	    free_decl_spec(&$1);
+	    free_decl_spec(&$2);
 	}
 	;
 
@@ -400,7 +403,7 @@ storage_class
 	}
 	| T_INLINE
 	{
-	    new_decl_spec(&$$, $1.text, $1.begin, DS_JUNK);
+	    new_decl_spec(&$$, $1.text, $1.begin, DS_INLINE);
 	}
 	| T_EXTENSION
 	{
@@ -489,21 +492,26 @@ struct_or_union_specifier
 	: struct_or_union any_id braces
 	{
 	    char *s;
-	    if ((s = implied_typedef()) == 0)
-	        (void)sprintf(s = buf, "%s %s", $1.text, $2.text);
+	    if ((s = implied_typedef()) == 0) {
+		need_temp(2 + strlen($1.text) + strlen($2.text));
+	        (void)sprintf(s = temp_buf, "%s %s", $1.text, $2.text);
+	    }
 	    new_decl_spec(&$$, s, $1.begin, DS_NONE);
 	}
 	| struct_or_union braces
 	{
 	    char *s;
-	    if ((s = implied_typedef()) == 0)
-		(void)sprintf(s = buf, "%s {}", $1.text);
+	    if ((s = implied_typedef()) == 0) {
+		need_temp(4 + strlen($1.text));
+		(void)sprintf(s = temp_buf, "%s {}", $1.text);
+	    }
 	    new_decl_spec(&$$, s, $1.begin, DS_NONE);
 	}
 	| struct_or_union any_id
 	{
-	    (void)sprintf(buf, "%s %s", $1.text, $2.text);
-	    new_decl_spec(&$$, buf, $1.begin, DS_NONE);
+	    need_temp(2 + strlen($1.text) + strlen($2.text));
+	    (void)sprintf(temp_buf, "%s %s", $1.text, $2.text);
+	    new_decl_spec(&$$, temp_buf, $1.begin, DS_NONE);
 	}
 	;
 
@@ -550,25 +558,38 @@ init_declarator
 	  T_INITIALIZER
 	;
 
+asm_specifier
+	: T_ASM T_ASMARG
+	| parameter_declaration T_ASM T_ASMARG
+	{
+	    free_parameter($1);
+	}
+	;
+
 enum_specifier
 	: enumeration any_id braces
 	{
 	    char *s;
-	    if ((s = implied_typedef()) == 0)
-		(void)sprintf(s = buf, "enum %s", $2.text);
+	    if ((s = implied_typedef()) == 0) {
+		need_temp(6 + strlen($2.text));
+		(void)sprintf(s = temp_buf, "enum %s", $2.text);
+	    }
 	    new_decl_spec(&$$, s, $1.begin, DS_NONE);
 	}
 	| enumeration braces
 	{
 	    char *s;
-	    if ((s = implied_typedef()) == 0)
-		(void)sprintf(s = buf, "%s {}", $1.text);
+	    if ((s = implied_typedef()) == 0) {
+		need_temp(4 + strlen($1.text));
+		(void)sprintf(s = temp_buf, "%s {}", $1.text);
+	    }
 	    new_decl_spec(&$$, s, $1.begin, DS_NONE);
 	}
 	| enumeration any_id
 	{
-	    (void)sprintf(buf, "enum %s", $2.text);
-	    new_decl_spec(&$$, buf, $1.begin, DS_NONE);
+	    need_temp(6 + strlen($2.text));
+	    (void)sprintf(temp_buf, "enum %s", $2.text);
+	    new_decl_spec(&$$, temp_buf, $1.begin, DS_NONE);
 	}
 	;
 
@@ -589,9 +610,12 @@ declarator
 	: pointer direct_declarator
 	{
 	    $$ = $2;
-	    (void)sprintf(buf, "%s%s", $1.text, $$->text);
+
+	    need_temp(1 + strlen($1.text) + strlen($2->text));
+	    (void)sprintf(temp_buf, "%s%s", $1.text, $$->text);
+
 	    free($$->text);
-	    $$->text = xstrdup(buf);
+	    $$->text = xstrdup(temp_buf);
 	    $$->begin = $1.begin;
 	    $$->pointer = TRUE;
 	}
@@ -606,17 +630,23 @@ direct_declarator
 	| '(' declarator ')'
 	{
 	    $$ = $2;
-	    (void)sprintf(buf, "(%s)", $$->text);
+
+	    need_temp(2 + strlen($2->text));
+	    (void)sprintf(temp_buf, "(%s)", $$->text);
+
 	    free($$->text);
-	    $$->text = xstrdup(buf);
+	    $$->text = xstrdup(temp_buf);
 	    $$->begin = $1.begin;
 	}
 	| direct_declarator T_BRACKETS
 	{
 	    $$ = $1;
-	    (void)sprintf(buf, "%s%s", $$->text, $2.text);
+
+	    need_temp(1 + strlen($1->text) + strlen($2.text));
+	    (void)sprintf(temp_buf, "%s%s", $$->text, $2.text);
+
 	    free($$->text);
-	    $$->text = xstrdup(buf);
+	    $$->text = xstrdup(temp_buf);
 	}
 	| direct_declarator '(' parameter_type_list ')'
 	{
@@ -639,11 +669,13 @@ direct_declarator
 pointer
 	: '*' opt_type_qualifiers
 	{
+	    need_temp(2 + strlen($2.text));
 	    (void)sprintf($$.text, "*%s", $2.text);
 	    $$.begin = $1.begin;
 	}
 	| '*' opt_type_qualifiers pointer
 	{
+	    need_temp(2 + strlen($2.text) + strlen($3.text));
 	    (void)sprintf($$.text, "*%s%s", $2.text, $3.text);
 	    $$.begin = $1.begin;
 	}
@@ -661,12 +693,14 @@ opt_type_qualifiers
 type_qualifier_list
 	: type_qualifier
 	{
+	    need_temp(2 + strlen($1.text));
 	    (void)sprintf($$.text, "%s ", $1.text);
 	    $$.begin = $1.begin;
 	    free($1.text);
 	}
 	| type_qualifier_list type_qualifier
 	{
+	    need_temp(1 + strlen($1.text) + strlen($2.text));
 	    (void)sprintf($$.text, "%s%s ", $1.text, $2.text);
 	    $$.begin = $1.begin;
 	    free($2.text);
@@ -737,6 +771,7 @@ identifier_or_ref
 	}
 	| '&' any_id
 	{
+	    need_temp(2 + strlen($2.text));
 #if OPT_LINTLIBRARY
 	    if (lintLibrary()) { /* Lint doesn't grok C++ ref variables */
 		$$ = $2;
@@ -755,9 +790,12 @@ abs_declarator
 	| pointer direct_abs_declarator
 	{
 	    $$ = $2;
-	    (void)sprintf(buf, "%s%s", $1.text, $$->text);
+
+	    need_temp(1 + strlen($1.text) + strlen($2->text));
+	    (void)sprintf(temp_buf, "%s%s", $1.text, $$->text);
+
 	    free($$->text);
-	    $$->text = xstrdup(buf);
+	    $$->text = xstrdup(temp_buf);
 	    $$->begin = $1.begin;
 	}
 	| direct_abs_declarator
@@ -767,17 +805,23 @@ direct_abs_declarator
 	: '(' abs_declarator ')'
 	{
 	    $$ = $2;
-	    (void)sprintf(buf, "(%s)", $$->text);
+
+	    need_temp(3 + strlen($2->text));
+	    (void)sprintf(temp_buf, "(%s)", $$->text);
+
 	    free($$->text);
-	    $$->text = xstrdup(buf);
+	    $$->text = xstrdup(temp_buf);
 	    $$->begin = $1.begin;
 	}
 	| direct_abs_declarator T_BRACKETS
 	{
 	    $$ = $1;
-	    (void)sprintf(buf, "%s%s", $$->text, $2.text);
+
+	    need_temp(1 + strlen($1->text) + strlen($2.text));
+	    (void)sprintf(temp_buf, "%s%s", $$->text, $2.text);
+
 	    free($$->text);
-	    $$->text = xstrdup(buf);
+	    $$->text = xstrdup(temp_buf);
 	}
 	| T_BRACKETS
 	{
@@ -801,7 +845,7 @@ direct_abs_declarator
 	| '(' parameter_type_list ')'
 	{
 	    Declarator *d;
-	    
+
 	    d = new_declarator("", "", $1.begin);
 	    $$ = new_declarator("%s()", "", $1.begin);
 	    $$->params = $2;
@@ -812,7 +856,7 @@ direct_abs_declarator
 	| '(' ')'
 	{
 	    Declarator *d;
-	    
+
 	    d = new_declarator("", "", $1.begin);
 	    $$ = new_declarator("%s()", "", $1.begin);
 	    $$->func_stack = d;
@@ -823,6 +867,9 @@ direct_abs_declarator
 
 %%
 
+#if defined(HAVE_CONFIG_H)
+# include "lex.yy.c"
+#else
 #if defined(__EMX__) || defined(MSDOS) || defined(OS2) || defined(WIN32) || defined(vms)
 # ifdef USE_flex
 #  include "lexyy.c"
@@ -832,10 +879,10 @@ direct_abs_declarator
 #else
 # include "lex.yy.c"
 #endif
+#endif
 
 static void
-yaccError (msg)
-char *msg;
+yaccError (char *msg)
 {
     func_params = NULL;
     put_error();		/* tell what line we're on, and what file */
@@ -846,9 +893,9 @@ char *msg;
  * analyzer.
  */
 void
-init_parser ()
+init_parser (void)
 {
-    static char *keywords[] = {
+    static const char *keywords[] = {
 	"const",
 	"restrict",
 	"volatile",
@@ -901,8 +948,11 @@ init_parser ()
 #endif
 #ifdef __GNUC__
 	/* gcc aliases */
+	"__builtin_va_arg",
+	"__builtin_va_list",
 	"__const",
 	"__const__",
+	"__gnuc_va_list",
 	"__inline",
 	"__inline__",
 	"__restrict",
@@ -911,7 +961,7 @@ init_parser ()
 	"__volatile__",
 #endif
     };
-    int i;
+    unsigned i;
 
     /* Initialize type qualifier table. */
     type_qualifiers = new_symbol_table();
@@ -925,9 +975,7 @@ init_parser ()
  * code to a temporary file.
  */
 void
-process_file (infile, name)
-FILE *infile;
-char *name;
+process_file (FILE *infile, char *name)
 {
     char *s;
 
@@ -972,12 +1020,16 @@ char *name;
 
 #ifdef NO_LEAKS
 void
-free_parser()
+free_parser(void)
 {
     free_symbol_table (type_qualifiers);
 #ifdef FLEX_SCANNER
     if (yy_current_buffer != 0)
 	yy_delete_buffer(yy_current_buffer);
 #endif
+    if (temp_buf != 0) {
+	temp_buf = 0;
+	temp_len = 0;
+    }
 }
 #endif

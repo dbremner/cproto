@@ -1,3 +1,5 @@
+%p 3000
+
 %{
 /* $Id$
  *
@@ -70,6 +72,7 @@ int	varargs_num;		/* code to save "VARARGS" */
 int	debug_trace;		/* true if we trace token-level stuff */
 char	base_file[BUFSIZ];	/* top-level file name */
 
+static int asm_level;	/* parenthesis level for "asm" parsing */
 static int save_cpp;	/* true if cpp-text within curly braces */
 static int in_cpp;	/* true while we are within cpp-text */
 static int curly;	/* number of curly brace nesting levels */
@@ -77,41 +80,47 @@ static int ly_count;	/* number of occurances of %% */
 
 #ifdef FLEX_SCANNER
 /* flex scanner state */
-static YY_BUFFER_STATE buffer_stack[MAX_INC_DEPTH];
+static YY_BUFFER_STATE *buffer_stack;
+
+#ifdef __cplusplus
+#define LexInput() yyinput()
 #endif
 
-static int inc_depth;				/* include nesting level */
-static IncludeStack inc_stack[MAX_INC_DEPTH];	/* stack of included files */
-static SymbolTable *included_files;		/* files already included */
+#endif /* FLEX_SCANNER */
 
-static int  type_of_name      ARGS((char *name));
-static void startCpp          ARGS((int level));
-static void finishCpp         ARGS((void));
+#ifndef LexInput
+#define LexInput() input()
+#endif
+
+static unsigned inc_limit;		/* stack size */
+static int inc_depth;			/* include nesting level */
+static IncludeStack *inc_stack;		/* stack of included files */
+static SymbolTable *included_files;	/* files already included */
+
+static int  type_of_name      (char *name);
+static void startCpp          (int level);
+static void finishCpp         (void);
 #if defined(apollo) || !OPT_LINTLIBRARY
-static void absorb_special    ARGS((void));
+static void absorb_special    (void);
 #endif
 #if OPT_LINTLIBRARY
-static void gcc_attribute     ARGS((void));
+static void gcc_attribute     (void);
 #endif
-static void update_line_num   ARGS((void));
-static void save_text         ARGS((void));
-static void save_text_offset  ARGS((void));
-static void get_quoted        ARGS((void));
-static void get_comment       ARGS((void));
-static void get_cpp_directive ARGS((char *dest, unsigned n));
-static void do_include        ARGS((char *f));
-static void include_file      ARGS((char *name, int convert));
-static void put_file          ARGS((FILE *outf));
-static void put_quoted        ARGS((int c));
+static void update_line_num   (void);
+static void save_text         (void);
+static void save_text_offset  (void);
+static void get_quoted        (void);
+static void get_comment       (void);
+static void get_cpp_directive (int copy);
+static void parsing_file_name (unsigned need);
+static void do_include        (char *f);
+static void include_file      (char *name, int convert);
+static void put_file          (FILE *outf);
+static void put_quoted        (int c);
 
 #if OPT_LINTLIBRARY
-static int decipher_comment   ARGS((char *keyword, int len));
+static int decipher_comment   (char *keyword, int len);
 #endif
-
-#ifdef yywrap
-#undef yywrap
-#endif
-int yywrap ARGS((void));
 %}
 
 WS		[ \t]
@@ -145,55 +154,76 @@ QUOTE		[\"\']
 <CPP_INLINE>[^;]*	finishCpp();
 
 <CPP1>define{WS}+{ID}	{
-			    char name[MAX_TEXT_SIZE], value[MAX_TEXT_SIZE];
+			    char *name;
+			    char *value;
 
 			    save_text();
+
+			    *(name = (char *) xmalloc((unsigned) (yyleng + 1))) = '\0';
 			    sscanf(yytext, "define %s", name);
-			    get_cpp_directive(buf, sizeof(buf));
-			    sscanf(buf, "%s", value);
+
+			    get_cpp_directive(1);
+
+			    *(value = (char *) xmalloc(1 + strlen(temp_buf))) = '\0';
+			    sscanf(temp_buf, "%s", value);
+
 			    new_symbol(define_names, name, value, DS_NONE);
+
+			    free(name);
+			    free(value);
 			}
 
 <CPP1>include{WS}*	{
 			    save_text();
-			    get_cpp_directive(buf, sizeof(buf));
-			    if (buf[0] != '"' && buf[0] != '<') {
-				Symbol *sym = find_symbol(define_names, buf);
+
+			    get_cpp_directive(1);
+
+			    if (temp_buf[0] != '"' && temp_buf[0] != '<') {
+				Symbol *sym = find_symbol(define_names, temp_buf);
 				if (sym != NULL && sym->value != NULL) {
-				    strcpy(buf, sym->value);
+				    need_temp(strlen(sym->value));
+				    strcpy(temp_buf, sym->value);
 				} else {
-				    buf[0] = '\0';
+				    temp_buf[0] = '\0';
 				}
 			    }
-			    if (buf[0] != '\0')
-				do_include(buf);
+			    if (temp_buf[0] != '\0')
+				do_include(temp_buf);
 			}
 
 <CPP1>line{WS}+[0-9]+{WS}+\".*$  {
 			    save_text();
-			    sscanf(yytext, "line %d \"%[^\"]\"",
-			     &cur_file->line_num, cur_file->file_name);
+
+			    parsing_file_name((unsigned) yyleng);
+			    sscanf(yytext, "line %u \"%[^\"]\"",
+					   &cur_file->line_num,
+					   cur_file->file_name);
+
 			    cur_file->line_num--;
 			    track_in();
 			    finishCpp();
 			}
 <CPP1>[0-9]+{WS}+\".*$  {
 			    save_text();
-			    sscanf(yytext, "%d \"%[^\"]\"", &cur_file->line_num,
-			     cur_file->file_name);
+
+			    parsing_file_name((unsigned) yyleng);
+			    sscanf(yytext, "%u \"%[^\"]\"",
+					   &cur_file->line_num,
+					   cur_file->file_name);
+
 			    cur_file->line_num--;
 			    track_in();
 			    finishCpp();
 			}
 <CPP1>[0-9]+.*$ 	{
 			    save_text();
-			    sscanf(yytext, "%d ", &cur_file->line_num);
+			    sscanf(yytext, "%u ", &cur_file->line_num);
 			    cur_file->line_num--;
 			    track_in();
 			    finishCpp();
 			}
 
-<CPP1>. 		{ save_text(); get_cpp_directive(NULL, 0); }
+<CPP1>. 		{ save_text(); get_cpp_directive(0); }
 
 <INITIAL>"("		{ save_text_offset(); return '('; }
 <INITIAL>")"		{
@@ -217,9 +247,10 @@ QUOTE		[\"\']
 			    return T_STRING_LITERAL;
 			}
 
+<INITIAL>"__asm__"	{ save_text(); BEGIN ASM; return T_ASM; }
 <INITIAL>asm		{ save_text(); BEGIN ASM; return T_ASM; }
-<ASM>"("		save_text();
-<ASM>")"		{ save_text(); BEGIN INITIAL; return T_ASMARG; }
+<ASM>"("		{ ++asm_level; save_text(); }
+<ASM>")"		{ --asm_level; save_text(); if (asm_level <= 0) { asm_level = 0; BEGIN INITIAL; return T_ASMARG; } }
 <ASM>{QUOTE} 		get_quoted();
 <ASM>. 			save_text();
 
@@ -334,8 +365,7 @@ QUOTE		[\"\']
 %%
 
 static void
-startCpp (level)
-int level;
+startCpp (int level)
 {
     save_cpp = level;
     in_cpp = TRUE;
@@ -343,7 +373,7 @@ int level;
 }
 
 static void
-finishCpp()
+finishCpp(void)
 {
     in_cpp = FALSE;
     if (save_cpp)
@@ -357,7 +387,7 @@ finishCpp()
  */
 #if defined(apollo) || !OPT_LINTLIBRARY
 static void
-absorb_special ()
+absorb_special (void)
 {
     int	c;
     int	nest	= 0;
@@ -383,16 +413,16 @@ absorb_special ()
  * avoid spurious matches with non-gcc compilers).
  */
 static void
-gcc_attribute ()
+gcc_attribute (void)
 {
     int	c, num1, num2;
     int	nest = 0;
-    int	len = 0;
+    unsigned len = 0;
     char bfr[BUFSIZ];
 
-    while ((c = input()) > 0) {
+    while ((c = LexInput()) > 0) {
 	if (len < sizeof(bfr)-1 && !isspace(c))
-	    bfr[len++] = c;
+	    bfr[len++] = (char) c;
 	if (c == '(')
 	    nest++;
 	else if (c == ')') {
@@ -416,8 +446,7 @@ gcc_attribute ()
 /* Decode the current token according to the type-of-name
  */
 static int
-type_of_name (name)
-char *name;
+type_of_name (char *name)
 {
     if (find_symbol(type_qualifiers, name) != NULL)
 	return T_TYPE_QUALIFIER;
@@ -430,17 +459,16 @@ char *name;
 }
 
 boolean
-is_typedef_name (name)
-char *name;
+is_typedef_name (char *name)
 {
-    return (find_symbol(typedef_names, name) != NULL);
+    return (boolean) (find_symbol(typedef_names, name) != NULL);
 }
 
 /* If the matched text contains any new line characters, then update the
  * current line number.
  */
 static void
-update_line_num ()
+update_line_num (void)
 {
     char *p = yytext;
     while (*p != '\0') {
@@ -452,7 +480,7 @@ update_line_num ()
 /* Save the matched text in the temporary file.
  */
 static void
-save_text ()
+save_text (void)
 {
 #if OPT_LINTLIBRARY
     if (!in_cpp)
@@ -467,7 +495,7 @@ save_text ()
  * to the file.
  */
 static void
-save_text_offset ()
+save_text_offset (void)
 {
     (void)strcpy(yylval.text.text, yytext);
 #if OPT_LINTLIBRARY
@@ -491,9 +519,7 @@ static struct {
 } cmtVal;
 
 static int
-decipher_comment (keyword, len)
-char *keyword;
-int len;
+decipher_comment (char *keyword, int len)
 {
     if (len != 0) {
 	int value;
@@ -534,8 +560,7 @@ int len;
 #endif
 
 static void
-put_quoted (c)
-int c;
+put_quoted (int c)
 {
     /* Modifying 'yytext[]' doesn't work well with FLEX, which simply
      * maintains 'yytext' as a pointer into its input buffer.  LEX copies
@@ -544,7 +569,7 @@ int c;
 #if defined(FLEX_SCANNER) || !defined(YYLMAX)
     if (c != 0) {
 	static char	temp[2];
-	temp[0] = c;
+	temp[0] = (char) c;
 	/* save_text */
 # if OPT_LINTLIBRARY
 	if (!in_cpp)
@@ -579,7 +604,7 @@ int c;
  * we don't try to eat them in the lexical rules.
  */
 static void
-get_quoted ()
+get_quoted (void)
 {
     int	delim = *yytext;
     int	c;
@@ -587,10 +612,10 @@ get_quoted ()
 #if defined(FLEX_SCANNER) || !defined(YYLMAX)
     put_quoted(delim);
 #endif
-    while ((c = input()) != 0) {
+    while ((c = LexInput()) != 0) {
 	if (c == '\\') {
 	    put_quoted(c);
-	    if ((c = input()) == 0)
+	    if ((c = LexInput()) == 0)
 		break;
 	    put_quoted(c);
 	} else {
@@ -610,12 +635,12 @@ get_quoted ()
 /* Scan to end of comment.
  */
 static void
-get_comment ()
+get_comment (void)
 {
     int c, lastc = '\0';
 
 #if OPT_LINTLIBRARY
-    int len = 0;
+    unsigned len = 0;
     char keyword[BUFSIZ];
 
     keyword[len] = '\0';
@@ -625,18 +650,18 @@ get_comment ()
     cmtVal.preproz = 0;
 #endif
 
-    while ((c = input()) != 0) {
+    while ((c = LexInput()) != 0) {
 	if (cur_file->convert)
 	    fputc(c, cur_file->tmp_file);
 
 #if OPT_LINTLIBRARY
 	if (!(isalnum(c) || c == '_' || c == '$')) {
 	    int flag = cmtVal.preproz;
-	    len = decipher_comment(keyword, len);
+	    len = (unsigned) decipher_comment(keyword, (int) len);
 	    if (flag != cmtVal.preproz)
 	    	lastc = '\0';
 	} else if (len+1 < sizeof(keyword)) {
-	    keyword[len++] = c;
+	    keyword[len++] = (char) c;
 	}
 #endif
 
@@ -663,7 +688,7 @@ get_comment ()
 		    }
 		}
 #if OPT_LINTLIBRARY
-		(void)decipher_comment(keyword, len);
+		(void)decipher_comment(keyword, (int) len);
 		if (cmtVal.varargs != 0) {
 		    if ((varargs_num = cmtVal.varargs) != 0
 		     && cmtVal.varText != 0) {
@@ -672,8 +697,8 @@ get_comment ()
 			varargs_str = xstrdup(keyword);
 		    }
 		}
-		if (cmtVal.externs != -1)
-		    extern_in = cmtVal.externs;
+		if (cmtVal.externs >= 0)
+		    extern_in = (unsigned) cmtVal.externs;
 		if (cmtVal.preproz != 0)
 		    fputc('\n', stdout);
 #endif
@@ -691,21 +716,22 @@ get_comment ()
     }
 }
 
-/* Scan rest of preprocessor directive.  If <dest> is not NULL, then store
- * the text in the buffer pointed to by <dest> having size <n>.
+/* Scan rest of preprocessor directive.  If copy is true, then store the text
+ * in temp_buf.
  */
 static void
-get_cpp_directive (dest, n)
-char *dest;		/* buffer to store directive text */
-unsigned n;		/* size of buffer to store directive text */
+get_cpp_directive (int copy)
 {
+    unsigned used = 0;
     char c, lastc[4];
 
     lastc[0] = lastc[1] = lastc[2] = lastc[3] = '\0';
-    if (dest != NULL)
-	*dest = '\0';
+    if (copy) {
+	need_temp(2);
+	*temp_buf = '\0';
+    }
 
-    while ((c = input()) != 0) {
+    while ((c = (char) LexInput()) != 0) {
 	if (cur_file->convert)
 	    fputc(c, cur_file->tmp_file);
 
@@ -726,18 +752,34 @@ unsigned n;		/* size of buffer to store directive text */
 	lastc[1] = lastc[2];
 	lastc[2] = c;
 
-	if (dest != NULL && n > 1) {
-	    *dest++ = c;
-	    *dest = '\0';
-	    --n;
+	if (copy) {
+	    if (used + 2 >= temp_len)
+		need_temp(temp_len + MAX_TEXT_SIZE);
+	    temp_buf[used++] = c;
+	    temp_buf[used] = '\0';
 	}
     }
+}
+
+/*
+ * Ensure that the filename buffer is large enough to hold yytext, e.g., if
+ * the sscanf gave the whole buffer.
+ */
+static void
+parsing_file_name (unsigned need)
+{
+    need += 2;
+    if (cur_file->len_file_name < need) {
+	cur_file->len_file_name += need;
+	cur_file->file_name = (char *) xrealloc(cur_file->file_name, cur_file->len_file_name);
+    }
+    cur_file->file_name[0] = 0;
 }
 
 /* Return a pointer to the current file name.
  */
 char *
-cur_file_name ()
+cur_file_name (void)
 {
     return cur_file->file_name;
 }
@@ -745,7 +787,7 @@ cur_file_name ()
 /* Return the current line number.
  */
 unsigned
-cur_line_num ()
+cur_line_num (void)
 {
     return cur_file->line_num;
 }
@@ -753,7 +795,7 @@ cur_line_num ()
 /* Return the current temporary output file.
  */
 FILE *
-cur_tmp_file ()
+cur_tmp_file (void)
 {
     return cur_file->tmp_file;
 }
@@ -761,7 +803,7 @@ cur_tmp_file ()
 /* Set the modify flag for the current file.
  */
 void
-cur_file_changed ()
+cur_file_changed (void)
 {
     cur_file->changed = TRUE;
 }
@@ -769,7 +811,7 @@ cur_file_changed ()
 /* Return the temporary file offset of beginning of the current comment.
  */
 long
-cur_begin_comment ()
+cur_begin_comment (void)
 {
     return cur_file->begin_comment;
 }
@@ -777,7 +819,7 @@ cur_begin_comment ()
 /* Return the text of the current lexical token.
  */
 char *
-cur_text ()
+cur_text (void)
 {
     return yytext;
 }
@@ -789,12 +831,14 @@ cur_text ()
  *
  * Not all systems have the ANSI tmpfile() function yet...
  *
- * DaviD W. Sanderson (dws@cs.wisc.edu)
+ * David W. Sanderson (dws@cs.wisc.edu)
+ *
+ * note - this was in version 3.10 from 1993 - TD
  */
 FILE *
-tmpfile ()
+tmpfile (void)
 {
-    char name[MAX_TEXT_SIZE];
+    char *name;
     char *tmpdir;
     FILE *f;
 
@@ -802,20 +846,19 @@ tmpfile ()
     {
 	tmpdir = "/tmp";
     }
+    name = xmalloc(strlen(tmpdir) + 20);
     sprintf(name, "%s/TfXXXXXX", tmpdir);
-    mktemp(name);
+    call_mktemp(name);
 
-    if ((f = fopen(name, "w+")) == (FILE *)0)
+    if ((f = fopen(name, "w+")) != 0)
     {
-	return (FILE *)0;
+	if (unlink(name) == -1)
+	{
+	    fclose(f);
+	    f = 0;
+	}
     }
-
-    if (unlink(name) == -1)
-    {
-	fclose(f);
-	return (FILE *)0;
-    }
-
+    free(name);
     return f;
 }
 #endif /* !HAVE_TMPFILE */
@@ -824,17 +867,31 @@ tmpfile ()
  * point to the file.
  */
 static void
-include_file (name, convert)
-char *name;		/* file name */
-int convert;		/* if TRUE, convert function definitions */
+include_file (char *name,	/* file name */
+	      int convert)	/* if TRUE, convert function definitions */
 {
-    ++inc_depth;
+    if (++inc_depth >= (int) inc_limit) {
+	unsigned need = (inc_limit | 31) + 1;
+#ifdef FLEX_SCANNER
+	buffer_stack = type_realloc(YY_BUFFER_STATE, buffer_stack, need);
+#endif
+	inc_stack = type_realloc(IncludeStack, inc_stack, need);
+	while (inc_limit < need) {
+#ifdef FLEX_SCANNER
+	    buffer_stack[inc_limit] = 0;
+#endif
+	    memset(inc_stack + inc_limit, 0, sizeof(*inc_stack));
+	    ++inc_limit;
+	}
+    }
+
     cur_file = inc_stack + inc_depth;
     cur_file->file = yyin;
     cur_file->base_name = xstrdup(name);
-    cur_file->file_name = strcpy(xmalloc(MAX_TEXT_SIZE), name);
+    cur_file->len_file_name = strlen(name) + MAX_TEXT_SIZE;
+    cur_file->file_name = strcpy((char *) xmalloc(cur_file->len_file_name), name);
     cur_file->line_num = 1;
-    cur_file->convert = convert;
+    cur_file->convert = (boolean) convert;
     cur_file->changed = FALSE;
 
 #ifdef FLEX_SCANNER
@@ -857,8 +914,7 @@ int convert;		/* if TRUE, convert function definitions */
 /* Copy converted C source from the temporary file to the output stream.
  */
 static void
-put_file (outf)
-FILE *outf;
+put_file (FILE *outf)
 {
     char block[BLOCK_SIZE];
     long filesize;
@@ -872,15 +928,14 @@ FILE *outf;
 	if (nread == 0)
 	    break;
 	fwrite(block, sizeof(char), nread, outf);
-	filesize -= nread;
+	filesize -= (long) nread;
     }
 }
 
 /* Remove the top of the include stack.
  */
 void
-pop_file (closed)
-int closed;
+pop_file (int closed)
 {
     FILE *outf;
 
@@ -922,21 +977,15 @@ int closed;
 /* Process include directive.
  */
 static void
-do_include (file_spec)
-char *file_spec; 	/* path surrounded by "" or <> */
+do_include (char *file_spec) 	/* path surrounded by "" or <> */
 {
-    int stdinc; 	/* 1 = path surrounded by <> */
-    char file[MAX_TEXT_SIZE], path[MAX_TEXT_SIZE];
+    unsigned stdinc; 	/* 1 = path surrounded by <> */
+    char *file;
+    char *path;
     char match, *s;
-    int i;
+    unsigned i;
     unsigned n;
     FILE *fp;
-
-    if (inc_depth >= MAX_INC_DEPTH-1) {
-	put_error();
-	fprintf(stderr, "includes too deeply nested\n");
-	return;
-    }
 
     if (file_spec[0] == '"') {
 	match = '"';
@@ -949,39 +998,45 @@ char *file_spec; 	/* path surrounded by "" or <> */
     }
     s = strchr(file_spec+1, match);
     n = (s != NULL) ? (unsigned)(s - file_spec - 1) : 0;
-    strncpy(file, file_spec+1, (size_t)n);
+    file = xstrdup(file_spec + 1);
     file[n] = '\0';
 
     /* Do nothing if the file was already included. */
+    path = (char *) xmalloc(strlen(file) + 3);
     sprintf(path, stdinc ? "<%s>" : "\"%s\"", file);
-    if (find_symbol(included_files, path) != NULL)
-	return;
-    new_symbol(included_files, path, NULL, DS_NONE);
+    if (find_symbol(included_files, path) == NULL) {
+	new_symbol(included_files, path, NULL, DS_NONE);
 
-    for (i = stdinc != 0; i < num_inc_dir; ++i) {
-	if (strlen(inc_dir[i]) == 0) {
-	    strcpy(path, file);
-	} else {
-	    sprintf(path, "%s/%s", inc_dir[i], file);
+	for (i = (unsigned) (stdinc != 0); i < num_inc_dir; ++i) {
+	    if (strlen(inc_dir[i]) == 0 || !strcmp(inc_dir[i], CURRENT_DIR)) {
+		strcpy(path, file);
+	    } else {
+		path = (char *) xrealloc(path, strlen(file) + strlen(inc_dir[i]) + 2);
+		sprintf(path, "%s/%s", inc_dir[i], file);
+	    }
+	    if ((fp = fopen(path, "r")) != NULL) {
+		yyin = fp;
+		include_file(path, func_style != FUNC_NONE && !stdinc);
+		free(file);
+		free(path);
+		return;
+	    }
 	}
-	if ((fp = fopen(path, "r")) != NULL) {
-	    yyin = fp;
-	    include_file(path, func_style != FUNC_NONE && !stdinc);
-	    return;
+
+	if (!quiet) {
+	    put_error();
+	    fprintf(stderr, "cannot read file %s\n", file_spec);
 	}
     }
-
-    if (!quiet) {
-	put_error();
-	fprintf(stderr, "cannot read file %s\n", file_spec);
-    }
+    free(file);
+    free(path);
 }
 
 /* When the end of the current input file is reached, pop a
  * nested include file.
  */
 int
-yywrap ()
+yywrap (void)
 {
     if (inc_depth > 0) {
 	pop_file(FALSE);
@@ -990,3 +1045,16 @@ yywrap ()
 	return 1;
     }
 }
+
+#ifdef NO_LEAKS
+void
+free_lexer(void)
+{
+    if (inc_limit != 0) {
+#ifdef FLEX_SCANNER
+	free (buffer_stack);
+#endif
+	free (inc_stack);
+    }
+}
+#endif

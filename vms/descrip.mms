@@ -32,7 +32,6 @@ C_FILES = \
 	lintlibs.c \
 	semantic.c \
 	strkey.c \
-	strstr.c \
 	symbol.c \
 	getopt.c
 
@@ -53,7 +52,6 @@ OBJECTS = \
 	lintlibs.obj, \
 	semantic.obj, \
 	strkey.obj, \
-	strstr.obj, \
 	symbol.obj, \
 	$(Y_TAB).obj, \
 	getopt.obj

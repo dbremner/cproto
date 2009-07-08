@@ -7,7 +7,7 @@
 #include <string.h>
 #include "cproto.h"
 
-#define	LETTER(c) (isalnum(c) || (c == '_') || (c == '$'))
+#define	LETTER(c) (isalnum(UCH(c)) || (c == '_') || (c == '$'))
 
 /*
  * Return a pointer to the first occurence of the given keyword in the string
@@ -15,8 +15,7 @@
  * against an identifier-token.
  */
 char *
-strkey (src, key)
-char *src, *key;
+strkey (char *src, char *key)
 {
     if (src != 0 && key != 0) {
 	register char *s  = src, *d;
@@ -28,7 +27,7 @@ char *src, *key;
 	    } else {
 		for (d = s; LETTER(*d); d++)
 		    ;
-		if ((d - s) == len && !strncmp(s, key, len))
+		if ((d - s) == (int) len && !strncmp(s, key, len))
 		    return s;
 		s = d;
 	    }
@@ -41,8 +40,7 @@ char *src, *key;
  * Delete a specified keyword from a string if it appears there
  */
 void
-strcut (src, key)
-char *src, *key;
+strcut (char *src, char *key)
 {
     register char *s, *d;
 
@@ -54,3 +52,27 @@ char *src, *key;
 	    ;
     }
 }
+
+/* Search for a substring within the given string.
+ * Return a pointer to the first occurence within the string,
+ * or NULL if not found.
+ */
+#if !HAVE_STRSTR
+char *
+strstr (char *src, char *key)
+{
+    char *s;
+    int keylen;
+
+    if ((keylen = strlen(key)) == 0)
+	return src;
+
+    s = strchr(src, *key);
+    while (s != NULL) {
+	if (strncmp(s, key, keylen) == 0)
+	    return s;
+	s = strchr(s+1, *key);
+    }
+    return NULL;
+}
+#endif

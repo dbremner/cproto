@@ -21,12 +21,12 @@ typedef struct symbol_table {
 } SymbolTable;
 
 extern SymbolTable *new_symbol_table	/* Create symbol table */
-	ARGS((void));
+	(void);
 extern void free_symbol_table		/* Destroy symbol table */
-	ARGS((SymbolTable *s));
+	(SymbolTable *s);
 extern Symbol *find_symbol		/* Lookup symbol name */
-	ARGS((SymbolTable *s, char *n));
+	(SymbolTable *s, const char *n);
 extern Symbol *new_symbol		/* Define new symbol */
-	ARGS((SymbolTable *s, char *n, char *v, int f));
+	(SymbolTable *s, const char *n, const char *v, int f);
 
 #endif

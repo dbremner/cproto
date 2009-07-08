@@ -12,17 +12,10 @@
 
 #if OPT_LINTLIBRARY
 
-	int	in_include;
+	unsigned in_include;
 
 static	SymbolTable *include_list;
 static	SymbolTable *declared_list;
-
-static	char	*strip_name      ARGS((char *s));
-static	void	free_inc_stack   ARGS((int n));
-static	void	make_inc_stack   ARGS((int n, char *path));
-static	int	already_included ARGS((char *path));
-static	void	add2implied_buf  ARGS((char *s, int append));
-static	int	c_suffix         ARGS((char *path));
 
 static	int	in_typedef;
 static	int	blank_lines;	/* used to filter blank lines from typedefs */
@@ -30,17 +23,15 @@ static	int	blank_lines;	/* used to filter blank lines from typedefs */
 static	int	implied_cnt;	/* state-count associated with implied_buf */
 static	char	*implied_buf;
 
-static	char	quote_l	= '"',
-		quote_r = '"';
+static	char	quote_l	= '"';
+static	char	quote_r = '"';
 
 /*
  * Output a string to standard output, keeping track of the trailing newlines
  * to make it simple to format with blank lines.
  */
 void
-put_string(outf, s)
-FILE	*outf;
-char	*s;
+put_string(FILE *outf, char *s)
 {
 	if (*s != '\0') {
 		fputs(s, outf);
@@ -59,12 +50,10 @@ char	*s;
  * Output a single character
  */
 void
-put_char(outf, c)
-FILE	*outf;
-int	c;
+put_char(FILE *outf, int c)
 {
 	static	char	s[] = "?";
-	s[0] = c;
+	s[0] = (char) c;
 	put_string(outf, s);
 }
 
@@ -72,8 +61,7 @@ int	c;
  * Write a newline, taking care not to make a blank line
  */
 void
-put_newline(outf)
-FILE	*outf;
+put_newline(FILE *outf)
 {
 	while (!blank_lines)
 		put_string(outf, "\n");
@@ -83,8 +71,7 @@ FILE	*outf;
  * Make a blank line (limited to 2 successive newlines)
  */
 void
-put_blankline(outf)
-FILE	*outf;
+put_blankline(FILE *outf)
 {
 	while (blank_lines < 2)
 		put_string(outf, "\n");
@@ -94,9 +81,7 @@ FILE	*outf;
  * Put a token, padded by a tab if it is short enough
  */
 void
-put_padded(outf, s)
-FILE	*outf;
-char	*s;
+put_padded(FILE *outf, char *s)
 {
 	put_string(outf, s);
 	put_char(outf, (lintLibrary() && strlen(s) < 8) ? '\t' : ' ');
@@ -113,8 +98,7 @@ char	*s;
  * If the "-T" option is set, we skip a blank line around typedefs.
  */
 void
-fmt_library(code)
-int	code;
+fmt_library(int code)
 {
 	if (lintLibrary() || types_out) {
 		static	int	save;
@@ -131,99 +115,107 @@ int	code;
  * conversion for names so test-diffs are less
  * (patch: should use relpath)
  */
+static char *
+strip_name(char *s)
+{
 #ifdef	vms
-static	char	*strip_name(s)
-	char	*s;
-	{
-		static	char	stripped[BUFSIZ];
-		auto	int	len = strlen(getwd(stripped));
-		if (strlen(s) > len
-		&& !strncmp(s, stripped, len))
-			s += len;
-		return (vms2name(stripped, s));
-	}
+	static	char	stripped[BUFSIZ];
+	auto	int	len = strlen(getwd(stripped));
+	if (strlen(s) > len
+	&& !strncmp(s, stripped, len))
+		s += len;
+	s = (vms2name(stripped, s));
 #else
-static	char	*strip_name(s)
-	char	*s;
-	{
-		static	char	GccLeaf[] = "/gcc-lib/";
-		static	char	IncLeaf[] = "/include/";
-		char *t;
-		register int	n;
-		register size_t	len;
-		int standard = FALSE;
+	static	char	GccLeaf[] = "/gcc-lib/";
+	static	char	IncLeaf[] = "/include/";
+	char *t;
+	unsigned	n;
+	unsigned	len;
+	int standard = FALSE;
 
-		for (n = 1; n < num_inc_dir; n++) {
-			len = strlen(inc_dir[n]);
-			if (!strncmp(inc_dir[n], s, len)
-			 && is_path_sep(s[len])) {
-				standard = TRUE;
-				s += len + 1;
-				quote_l = '<';
-				quote_r = '>';
-				break;
-			}
+	for (n = 1; n < num_inc_dir; n++) {
+		len = strlen(inc_dir[n]);
+		if (!strncmp(inc_dir[n], s, len)
+		 && is_path_sep(s[len])) {
+			standard = TRUE;
+			s += len + 1;
+			quote_l = '<';
+			quote_r = '>';
+			break;
 		}
-		if (!standard) {
-			quote_l =
-			quote_r = '"';
-			if (*s == '.' && is_path_sep(s[1]))
-				s += 2;
-			else if ((t = strstr(s, GccLeaf)) != 0
-			     &&  (t = strstr(t, IncLeaf)) != 0) {
-			  	s = t+sizeof(IncLeaf)-1;
-				quote_l = '<';
-				quote_r = '>';
-			}
+	}
+	if (!standard) {
+		quote_l =
+		quote_r = '"';
+		if (*s == '.' && is_path_sep(s[1]))
+			s += 2;
+		else if ((t = strstr(s, GccLeaf)) != 0
+		     &&  (t = strstr(t, IncLeaf)) != 0) {
+			s = t+sizeof(IncLeaf)-1;
+			quote_l = '<';
+			quote_r = '>';
 		}
-		return s;
 	}
 #endif
+	return s;
+}
 #define	CUR_FILE	strip_name(cur_file_name())
 
-static	int	base_level;
-static	char	*inc_stack[MAX_INC_DEPTH];
+static unsigned base_level;
+static unsigned inc_depth = 0;
+static char **inc_stack = 0;
+
+static char *
+get_inc_stack(unsigned n)
+{
+	return (((int) n) < 0 || n >= inc_depth) ? 0 : inc_stack[n];
+}
 
 #ifdef	DEBUG
-static
-dump_stack(tag)
-char	*tag;
+static void
+dump_stack(char *tag)
 {
-	register int	j;
+	unsigned	j;
 	printf("/* stack%s:%s", tag, cur_file_name());
 	for (j = 0; j <= in_include; j++)
 		printf("\n\t%d%s:%s", j,
 			j == base_level ? "*" : "",
-			inc_stack[j] ? inc_stack[j] : "?");
+			get_inc_stack(j) ? get_inc_stack(j) : "?");
 	printf(" */\n");
 }
 #endif	/* DEBUG */
 
-static
-void	free_inc_stack(n)
-	int	n;
+static void
+free_inc_stack(unsigned n)
 {
-	if (inc_stack[n] != 0) {
+	if (get_inc_stack(n) != 0) {
 		free(inc_stack[n]);
 		inc_stack[n] = 0;
 	}
 }
 
-static
-void	make_inc_stack(n, s)
-	int	n;
-	char	*s;
+static void
+make_inc_stack(unsigned n, char *s)
 {
-	free_inc_stack(n);
-	inc_stack[n] = xstrdup(s);
+	if (n != 0) {
+		unsigned need = (n | 31) + 1;
+
+		free_inc_stack(n);
+		if (n > inc_depth) {
+			inc_stack = type_realloc(char *, inc_stack, need);
+			while (inc_depth < need)
+				inc_stack[inc_depth++] = 0;
+			inc_depth = need;
+		}
+		inc_stack[n] = xstrdup(s);
+	}
 }
 
 /*
  * Keep track of include-files so that we only include each once.
  */
-static
-int	already_included (path)
-	char	*path;
+static int
+already_included (char *path)
 {
 	if (!include_list)
 		include_list = new_symbol_table();
@@ -238,8 +230,8 @@ int	already_included (path)
  * include-files so that we declare them only once in the lint library
  * output.
  */
-int	already_declared (name)
-	char	*name;
+int
+already_declared (char *name)
 {
 	if (declared_list == 0)
 		declared_list = new_symbol_table ();
@@ -254,13 +246,15 @@ int	already_declared (name)
  * Initialize state for 'track_in()'
  */
 static	int	InitTracking;
-void	begin_tracking()
+
+void
+begin_tracking(void)
 {
 	InitTracking = FALSE;
 }
 
-static	int	c_suffix(path)
-	char	*path;
+static int
+c_suffix(char *path)
 {
 	char	*last = path + strlen(path);
 #ifdef	vms
@@ -272,6 +266,32 @@ static	int	c_suffix(path)
 }
 
 /*
+ * Keep track of "include files" that we always want to filter out (ignore).
+ */
+static int
+ignored (char *path)
+{
+	if (strcmp(path, "<built-in>") == 0
+	 || strcmp(path, "<command line>") == 0)
+		return TRUE;
+	return FALSE;
+}
+
+static const char *
+skip_dot(const char *a)
+{
+	if (!strncmp(a, "./", 2))
+		a += 2;
+	return a;
+}
+
+static int
+same_file(const char *a, const char *b)
+{
+	return !strcmp(skip_dot(a), skip_dot(b));
+}
+
+/*
  * For lint-library, we want to keep track of what file we are in so that we
  * can generate appropriate comments and include-statements.
  *
@@ -280,12 +300,13 @@ static	int	c_suffix(path)
  * number of each processed file.  After the first '#' comment, all others
  * refer to included files.
  */
-void	track_in()
+void
+track_in(void)
 {
 	static	char	old_file[MAX_TEXT_SIZE];	/* from last call */
-	auto	boolean	show = lintLibrary();
+	auto	int	show = lintLibrary();
 
-	if (!show && !debug_trace)
+	if (!show && !do_tracking && !debug_trace)
 		return;
 
 #ifdef	DEBUG
@@ -299,16 +320,16 @@ void	track_in()
 			InitTracking = TRUE;
 			/* yacc may omit first cpp-line! */
 			in_include =
-			base_level = (strcmp(cur_file_name(), base_file) != 0);
+			base_level = (unsigned) !same_file(cur_file_name(), base_file);
 			make_inc_stack(0, base_file);
-		} else if (!strcmp(cur_file_name(), base_file)) {
+		} else if (same_file(cur_file_name(), base_file)) {
 			flush_varargs();
 			in_include = 0;	/* reset level */
 		} else {
 			make_inc_stack(in_include, old_file);
 			if (in_include++ == 0) {
 				char	*s = CUR_FILE;
-				if (show && !already_included(s)) {
+				if (show && !already_included(s) && !ignored(s)) {
 					fmt_library(4);
 					put_string (stdout, "#include ");
 					put_char   (stdout, quote_l);
@@ -322,19 +343,20 @@ void	track_in()
 			make_inc_stack(in_include, cur_file_name());
 		}
 		(void)strcpy(old_file, cur_file_name());
-	} else if (!strcmp(cur_file_name(), base_file)) {
+	} else if (same_file(cur_file_name(), base_file)) {
 		in_include = 0;	/* kludgy bison! */
 		(void)strcpy(old_file, cur_file_name());
-	} else if (strcmp(old_file, cur_file_name())) { /* continue/unnest ? */
-		int n, found;
+	} else if (!same_file(old_file, cur_file_name())) { /* continue/unnest ? */
+		unsigned n;
+		int found;
 		char *s = cur_file_name();
 #ifdef DEBUG
 		char temp[80];
 #endif
 
 		flush_varargs();
-		for (n = in_include, found = FALSE; n >= 0; n--) {
-			if (!strcmp(inc_stack[n], s)) {
+		for (n = in_include, found = FALSE; (int) n >= 0; n--) {
+			if (same_file(get_inc_stack(n), s)) {
 				found = TRUE;
 				in_include--;
 				break;
@@ -372,7 +394,7 @@ void	track_in()
 #endif
 			}
 		}
-		(void)strcpy(old_file, inc_stack[in_include]);
+		(void)strcpy(old_file, get_inc_stack(in_include));
 	}
 #ifdef	DEBUG
 	dump_stack("-after");
@@ -383,9 +405,7 @@ void	track_in()
  * Copy/append to 'implied_buf[]'
  */
 static
-void	add2implied_buf(s,append)
-	char	*s;
-	int	append;
+void add2implied_buf(char *s, int append)
 {
 	static	unsigned
 			implied_len,	/* current strlen(implied_buf) */
@@ -396,9 +416,9 @@ void	add2implied_buf(s,append)
 	implied_len += strlen(s);
 
 	if (implied_buf == 0)
-		*(implied_buf = malloc(implied_max = BUFSIZ)) = '\0';
+		*(implied_buf = (char *) malloc(implied_max = BUFSIZ)) = '\0';
 	if (implied_max < implied_len + 2)
-		implied_buf = realloc(implied_buf, implied_max += implied_len+2);
+		implied_buf = (char *) realloc(implied_buf, implied_max += implied_len+2);
 	if (!append)
 		*implied_buf = '\0';
 	(void)strcat(implied_buf, s);
@@ -413,7 +433,8 @@ void	add2implied_buf(s,append)
  * define the structure.  If no curly-braces are found by the end of the
  * rule, we can discard the buffer.
  */
-int	want_typedef()
+int
+want_typedef(void)
 {
 	if (lintLibrary()) {
 		if (in_include == 0)
@@ -424,7 +445,8 @@ int	want_typedef()
 	return (FALSE);
 }
 
-void	begin_typedef()
+void
+begin_typedef(void)
 {
 	if (want_typedef()) {
 		in_typedef = TRUE;
@@ -433,8 +455,8 @@ void	begin_typedef()
 	}
 }
 
-void	copy_typedef(s)
-	char	*s;
+void
+copy_typedef(char *s)
 {
 	if (!strcmp(s, "/*")
 	 || *s == '#')
@@ -446,7 +468,7 @@ void	copy_typedef(s)
 			put_string(stdout, s);
 	} else if (implied_cnt > 0) {	/* "KEY ID {" ? */
 		add2implied_buf(s,TRUE);
-		if (!isspace(*s))
+		if (!isspace(UCH(*s)))
 			implied_cnt--;
 		if ((implied_cnt == 2 || implied_cnt == 1)
 		&&  !strcmp(s, "{")) {
@@ -455,15 +477,16 @@ void	copy_typedef(s)
 	}
 }
 
-void	end_typedef()
+void
+end_typedef(void)
 {
 	copy_typedef("\n");
 	in_typedef = FALSE;
 	(void)implied_typedef();
 }
 
-void	imply_typedef(s)
-	char	*s;
+void
+imply_typedef(char *s)
 {
 	if (!in_typedef && want_typedef()) {
 		add2implied_buf(s,FALSE);
@@ -471,7 +494,8 @@ void	imply_typedef(s)
 	}
 }
 
-char *	implied_typedef()
+char *
+implied_typedef(void)
 {
 	if (implied_cnt > 0) {
 		implied_cnt = 0;
@@ -483,8 +507,8 @@ char *	implied_typedef()
 /*
  * Indent lint-library stuff to make it readable
  */
-void	indent(outf)
-	FILE	*outf;
+void
+indent(FILE *outf)
 {
 	put_string(outf, "\n\t\t");
 }
@@ -492,8 +516,8 @@ void	indent(outf)
 /* Test for the special case of an ellipsis-parameter when trying to make a
  * lint-library
  */
-int	lint_ellipsis(p)
-	Parameter	*p;
+int
+lint_ellipsis(Parameter *p)
 {
 	return (   knrLintLibrary()
 		&& (!strcmp(p->declarator->name, ELLIPSIS)));
@@ -504,7 +528,8 @@ int	lint_ellipsis(p)
  * special attribute that's attached to a function, so we don't accidentally
  * propagate it to the next function (or data) to be output.
  */
-void	flush_varargs()
+void
+flush_varargs(void)
 {
 	exitlike_func = FALSE;
 
@@ -519,8 +544,8 @@ void	flush_varargs()
  * parameter list contains an ellipsis, generate a corresponding "VARARGS"
  * comment for lint-library output.
  */
-void	ellipsis_varargs(d)
-	Declarator	*d;
+void
+ellipsis_varargs(Declarator *d)
 {
 	int		count;
 	Parameter	*p;
@@ -549,8 +574,8 @@ void	ellipsis_varargs(d)
  * we are starting from a function prototype which has no explicit parameter
  * name.
  */
-char *	supply_parm(count)
-	int	count;
+char *
+supply_parm(int count)
 {
 	static	char	temp[80];
 	(void)sprintf(temp, "p%d", count);
@@ -563,8 +588,8 @@ char *	supply_parm(count)
  * (Attempt to) distinguish between declarators for functions and for
  * function pointers.
  */
-int	is_actual_func (d)
-	Declarator *d;
+int
+is_actual_func (Declarator *d)
 {
 	if (lintLibrary() && (d->func_def != FUNC_NONE)) {
 		if (d->func_stack->text[0] == PAREN_L) {
@@ -580,10 +605,11 @@ int	is_actual_func (d)
 /*
  * Output the body (or terminating semicolon) of a procedure
  */
-void	put_body(outf, decl_spec, declarator)
-	FILE		*outf;
-	DeclSpec	*decl_spec;	/* declaration specifier */
-	Declarator	*declarator;
+void
+put_body(
+	FILE		*outf,
+	DeclSpec	*decl_spec,	/* declaration specifier */
+	Declarator	*declarator)
 {
     register char	*spec_text;
 
@@ -637,13 +663,17 @@ void	put_body(outf, decl_spec, declarator)
 
 #ifdef NO_LEAKS
 void
-free_lintlibs()
+free_lintlibs(void)
 {
-    register int n;
+    unsigned n;
+
     if (implied_buf != 0)
     	free(implied_buf);
-    for (n = 0; n < MAX_INC_DEPTH; n++)
-    	free_inc_stack(n);
+    if (inc_stack != 0) {
+	for (n = 0; n < inc_depth; n++)
+	    free_inc_stack(n);
+	free(inc_stack);
+    }
     if (include_list != 0)
     	free_symbol_table(include_list);
     if (declared_list != 0)

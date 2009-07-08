@@ -15,9 +15,9 @@ LIBS = \bc\lib\wildargs.obj
 DIST1 = README CHANGES cproto.man
 DIST2 = cproto.1 borland.mak micrsoft.mak makefile.in lex.l grammar.y
 DIST3 = system.h cproto.h patchlev.h semantic.h symbol.h
-DIST4 = cproto.c popen.c lintlibs.c semantic.c strkey.c strstr.c symbol.c
+DIST4 = cproto.c popen.c lintlibs.c semantic.c strkey.c symbol.c
 
-OBJECTS = cproto.obj lintlibs.obj getopt.obj popen.obj semantic.obj strkey.obj strstr.obj symbol.obj y_tab.obj
+OBJECTS = cproto.obj lintlibs.obj getopt.obj popen.obj semantic.obj strkey.obj symbol.obj y_tab.obj
 
 all: cproto.exe
 
@@ -59,5 +59,4 @@ lintlibs.obj: system.h cproto.h symbol.h semantic.h
 popen.obj: system.h cproto.h
 semantic.obj: system.h cproto.h symbol.h semantic.h
 strkey.obj: cproto.h system.h
-strstr.obj: system.h
 symbol.obj: system.h cproto.h symbol.h

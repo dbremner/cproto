@@ -6,14 +6,11 @@
 #include "cproto.h"
 #include "symbol.h"
 
-static unsigned hash ARGS((char *name));
-static Symbol *search_symbol_list ARGS((Symbol *list, char *name));
-
 /* Create a symbol table.
  * Return a pointer to the symbol table or NULL if an error occurs.
  */
 SymbolTable *
-new_symbol_table ()
+new_symbol_table (void)
 {
     SymbolTable *symtab;
     int i;
@@ -29,8 +26,7 @@ new_symbol_table ()
 /* Free the memory allocated to the symbol table.
  */
 void
-free_symbol_table (symtab)
-SymbolTable *symtab;
+free_symbol_table (SymbolTable *symtab)
 {
     int i;
     Symbol *sym, *next;
@@ -52,10 +48,9 @@ SymbolTable *symtab;
 /* This is a simple hash function mapping a symbol name to a hash bucket. */
 
 static unsigned
-hash (name)
-char *name;
+hash (const char *name)
 {
-    char *s;
+    const char *s;
     unsigned h;
 
     h = 0;
@@ -70,9 +65,7 @@ char *name;
  * Return a pointer to the symbol or NULL if not found.
  */
 static Symbol *
-search_symbol_list (list, name)
-Symbol *list;
-char *name;
+search_symbol_list (Symbol *list, const char *name)
 {
     Symbol *sym;
 
@@ -88,9 +81,7 @@ char *name;
  * Return a pointer to the symbol or NULL if not found.
  */
 Symbol *
-find_symbol (symtab, name)
-SymbolTable *symtab;
-char *name;
+find_symbol (SymbolTable *symtab, const char *name)
 {
     return search_symbol_list(symtab->bucket[hash(name)], name);
 }
@@ -101,14 +92,14 @@ char *name;
  * Return a pointer to the symbol.
  */
 Symbol *
-new_symbol (symtab, name, value, flags)
-SymbolTable *symtab;	/* symbol table */
-char *name;		/* symbol name */
-char *value;		/* symbol value */
-int flags;		/* symbol attributes */
+new_symbol (
+SymbolTable *symtab,	/* symbol table */
+const char *name,	/* symbol name */
+const char *value,	/* symbol value */
+int flags)		/* symbol attributes */
 {
     Symbol *sym;
-    int i;
+    unsigned i;
 
     if ((sym = find_symbol(symtab, name)) == NULL) {
 	sym = NEW(Symbol);
@@ -120,6 +111,6 @@ int flags;		/* symbol attributes */
 	free(sym->value);
     }
     sym->value = (value != NULL) ? xstrdup(value) : NULL;
-    sym->flags = flags;
+    sym->flags = (short) flags;
     return sym;
 }

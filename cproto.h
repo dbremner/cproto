@@ -9,6 +9,34 @@
 #include "config.h"
 #endif
 
+#ifndef BISON_HAS_YYTNAME
+#define BISON_HAS_YYTNAME 0
+#endif
+
+#ifndef YACC_HAS_YYNAME
+#define YACC_HAS_YYNAME 0
+#endif
+
+#ifndef YACC_HAS_YYTOKS
+#define YACC_HAS_YYTOKS 0
+#endif
+
+#ifndef YACC_HAS_YYTOKS_2
+#define YACC_HAS_YYTOKS_2 0
+#endif
+
+#ifndef HAVE_POPEN_PROTOTYPE
+#define HAVE_POPEN_PROTOTYPE 0
+#endif
+
+#ifndef HAVE_LIBDBMALLOC
+#define HAVE_LIBDBMALLOC 0
+#endif
+
+#ifndef HAVE_LIBDMALLOC
+#define HAVE_LIBDMALLOC 0
+#endif
+
 #include "system.h"
 
 #if HAVE_LIBDMALLOC || HAVE_LIBDBMALLOC || defined(DOALLOC)
@@ -20,6 +48,10 @@
 #define	NEW(type)	(type *)0
 #else
 #define	NEW(type)	(type *)xmalloc(sizeof(type))
+#endif
+
+#ifndef UCH
+#define UCH(c)		((unsigned char)(c))
 #endif
 
 /* Useful constants (mainly to avoid problems balancing parentheses...) */
@@ -58,7 +90,8 @@ typedef struct parameter_list {
 #define DS_CHAR 	4	/* contains "char" type specifier */
 #define DS_SHORT	8	/* contains "short" type specifier */
 #define DS_FLOAT	16	/* contains "float" type specifier */
-#define DS_JUNK 	32	/* we're not interested in this declaration */
+#define DS_INLINE	32	/* contains "inline" specifier */
+#define DS_JUNK 	64	/* we're not interested in this declaration */
 
 /* This structure stores information about a declaration specifier. */
 typedef struct decl_spec {
@@ -108,6 +141,16 @@ typedef struct parameter {
     char *comment;		/* comment following the parameter */
 } Parameter;
 
+/* parser stack entry type */
+typedef union {
+    Text text;
+    DeclSpec decl_spec;
+    Parameter *parameter;
+    ParameterList param_list;
+    Declarator *declarator;
+    DeclaratorList decl_list;
+} YYSTYPE;
+
 /* Prototype styles */
 #if OPT_LINTLIBRARY
 #define PROTO_ANSI_LLIB		-2	/* form ANSI lint-library source */
@@ -155,6 +198,7 @@ typedef struct func_format {
 /* Program options */
 extern boolean extern_out;
 extern Scope scope_out;
+extern boolean inline_out;
 #if OPT_LINTLIBRARY
 extern boolean types_out;
 extern boolean lint_shadowed;
@@ -170,70 +214,74 @@ extern boolean proto_comments;
 extern boolean file_comments;
 extern boolean quiet;
 extern char *func_directive;
-extern int num_inc_dir;
-extern char *inc_dir[];
+extern unsigned num_inc_dir;
+extern char **inc_dir;
 extern FuncFormat fmt[4];
 
 /* Global declarations */
 extern char *progname;
 extern int varargs_num;		/* supports varargs-comment */
 extern char *varargs_str;	/* additional info, such as PRINTFLIKEnn */
-extern int extern_in;		/* supports "LINT_EXTERNnn" */
+extern unsigned extern_in;	/* supports "LINT_EXTERNnn" */
+extern int do_tracking;		/* supports "-X" option */
 extern int exitlike_func;	/* supports noreturn-attribute */
-extern int in_include;		/* current include-level */
+extern unsigned in_include;	/* current include-level */
 extern int debug_trace;
 extern char base_file[];
 
 /* cproto.c */
 #if HAVE_LIBDBMALLOC
-extern void ExitProgram     ARGS((int code));
+extern void ExitProgram     (int code);
 #define exit(code) ExitProgram(code)
 #endif
 #if !HAVE_LIBDMALLOC
 #ifdef NO_LEAKS
-extern char *xMalloc        ARGS((unsigned n, char *f, int l));
-extern char *xStrdup        ARGS((char *s,    char *f, int l));
+extern void *xRealloc       (void *p, unsigned n, char *f, int l);
+extern void *xMalloc        (unsigned n, char *f, int l);
+extern char *xStrdup        (const char *s, char *f, int l);
+#define xrealloc(p,n)       xRealloc(p, n, __FILE__, __LINE__)
 #define xmalloc(n)          xMalloc(n, __FILE__, __LINE__)
 #define xstrdup(s)          xStrdup(s, __FILE__, __LINE__)
 #else
-extern char *xmalloc        ARGS((unsigned n));
-extern char *xstrdup        ARGS((char *src));
+extern void *xrealloc       (void *p, unsigned n);
+extern void *xmalloc        (unsigned n);
+extern char *xstrdup        (const char *src);
 #endif
 #endif /* !HAVE_LIBDMALLOC */
-extern void put_error       ARGS((void));
-extern int is_path_sep      ARGS((int ch));
-extern char *trim_path_sep  ARGS((char *s));
+extern void put_error       (void);
+extern int is_path_sep      (int ch);
+extern char *trim_path_sep  (char *s);
 
 /* lintlibs.c */
 #if OPT_LINTLIBRARY
-extern void put_string      ARGS((FILE *outf, char *s));
-extern void put_char        ARGS((FILE *outf, int c));
-extern void put_newline     ARGS((FILE *outf));
-extern void put_blankline   ARGS((FILE *outf));
-extern void put_padded      ARGS((FILE *outf, char *s));
-extern void fmt_library     ARGS((int code));
-extern void begin_tracking  ARGS((void));
-extern int already_declared ARGS((char *name));
-extern void track_in        ARGS((void));
-extern int want_typedef     ARGS((void));
-extern void begin_typedef   ARGS((void));
-extern void copy_typedef    ARGS((char *s));
-extern void end_typedef     ARGS((void));
-extern void imply_typedef   ARGS((char *s));
-extern char *implied_typedef ARGS((void));
-extern void indent          ARGS((FILE *outf));
-extern int lint_ellipsis    ARGS((Parameter *p));
+extern void put_string      (FILE *outf, char *s);
+extern void put_char        (FILE *outf, int c);
+extern void put_newline     (FILE *outf);
+extern void put_blankline   (FILE *outf);
+extern void put_padded      (FILE *outf, char *s);
+extern void fmt_library     (int code);
+extern void begin_tracking  (void);
+extern int already_declared (char *name);
+extern void track_in        (void);
+extern int want_typedef     (void);
+extern void begin_typedef   (void);
+extern void copy_typedef    (char *s);
+extern void end_typedef     (void);
+extern void imply_typedef   (char *s);
+extern char *implied_typedef (void);
+extern void indent          (FILE *outf);
+extern int lint_ellipsis    (Parameter *p);
 #if OPT_LINTLIBRARY
-extern void flush_varargs   ARGS((void));
+extern void flush_varargs   (void);
 #else
 #define flush_varargs() /* nothing */
 #endif
-extern void ellipsis_varargs ARGS((Declarator *d));
-extern char *supply_parm    ARGS((int count));
-extern int is_actual_func   ARGS((Declarator *d));
-extern void put_body        ARGS((FILE *outf, DeclSpec *decl_spec, Declarator *declarator));
+extern void ellipsis_varargs (Declarator *d);
+extern char *supply_parm    (int count);
+extern int is_actual_func   (Declarator *d);
+extern void put_body        (FILE *outf, DeclSpec *decl_spec, Declarator *declarator);
 # ifdef NO_LEAKS
-extern void free_lintlibs   ARGS((void));
+extern void free_lintlibs   (void);
 # endif
 #else
 #define put_string(fp,S)    fputs(S, fp)
@@ -249,22 +297,39 @@ extern void free_lintlibs   ARGS((void));
 #endif
 
 /* strkey.c */
-extern char *strkey         ARGS((char *src, char *key));
-extern void strcut          ARGS((char *src, char *key));
+extern char *strkey         (char *src, char *key);
+extern void strcut          (char *src, char *key);
 
 /* grammar.y */
-extern boolean is_typedef_name ARGS((char *name));
-extern char *cur_file_name  ARGS((void));
-extern unsigned cur_line_num ARGS((void));
-extern FILE *cur_tmp_file   ARGS((void));
-extern void cur_file_changed ARGS((void));
-extern long cur_begin_comment ARGS((void));
-extern char *cur_text       ARGS((void));
-extern void pop_file        ARGS((int closed));
-extern void init_parser     ARGS((void));
-extern void process_file    ARGS((FILE *infile, char *name));
+extern boolean is_typedef_name (char *name);
+extern char *cur_file_name  (void);
+extern unsigned cur_line_num (void);
+extern FILE *cur_tmp_file   (void);
+extern void cur_file_changed (void);
+extern long cur_begin_comment (void);
+extern char *cur_text       (void);
+extern void pop_file        (int closed);
+extern void init_parser     (void);
+extern void process_file    (FILE *infile, char *name);
 #ifdef NO_LEAKS
-extern void free_parser     ARGS((void));
+extern void free_lexer      (void);
+extern void free_parser     (void);
 #endif
+
+/* workaround for one of the bugs in bison 1.875 */
+#ifdef YYBISON
+#define YYSTYPE YYSTYPE
+#endif
+
+#ifdef HAVE_MKSTEMP
+#define call_mktemp(s) mkstemp(s)
+#else
+#define call_mktemp(s) mktemp(s)
+#endif
+
+#define type_realloc(type,ptr,size) \
+		(((ptr) != 0) \
+		 ? (type *) xrealloc(ptr, (size) * sizeof(type)) \
+		 : (type *) xmalloc((size) * sizeof(type)))
 
 #endif /* CPROTO_H */
