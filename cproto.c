@@ -271,7 +271,7 @@ int
 is_path_sep (ch)
 int ch;
 {
-#if defined(MSDOS) || defined(OS2)
+#if defined(MSDOS)
     return ch == '/' || ch == '\\';
 #else
     return ch == '/';
@@ -677,10 +677,6 @@ char *argv[];
     FILE *inf;
     char *argv0;
 
-#ifdef __EMX__
-    /* Expand file wild cards. */
-    _wildcard(&argc, &argv);
-#endif
 
     /* Get the program name from the 0th argument, stripping the pathname
      * for readability.
@@ -701,7 +697,7 @@ char *argv[];
 	if (is_path_sep(progname[i])) {
 	    progname += (i + 1);
 	    break;
-# if defined(MSDOS) || defined(OS2)
+# if defined(MSDOS)
 	} else if (progname[i] == '.') {
 	    progname[i] = '\0';
 # endif

@@ -823,7 +823,7 @@ direct_abs_declarator
 
 %%
 
-#if defined(__EMX__) || defined(MSDOS) || defined(OS2) || defined(WIN32) || defined(vms)
+#if defined(MSDOS) || defined(WIN32) || defined(vms)
 # ifdef USE_flex
 #  include "lexyy.c"
 # else
@@ -857,7 +857,7 @@ init_parser ()
 	"noshare",
 	"readonly",
 #endif
-#if defined(MSDOS) || defined(OS2)
+#if defined(MSDOS)
 	"__cdecl",
 	"__export",
 	"__far",
@@ -895,9 +895,6 @@ init_parser ()
 	"huge",
 	"near",
 	"pascal",
-#ifdef OS2
-	"__far16",
-#endif
 #endif
 #ifdef __GNUC__
 	/* gcc aliases */
@@ -937,7 +934,7 @@ char *name;
 	    ++s;
 	    if (*s == 'l' || *s == 'y')
 		BEGIN LEXYACC;
-#if defined(MSDOS) || defined(OS2)
+#if defined(MSDOS)
 	    if (*s == 'L' || *s == 'Y')
 		BEGIN LEXYACC;
 #endif
